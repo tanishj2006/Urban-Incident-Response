@@ -1,69 +1,173 @@
-import Image from "next/image";
+import Link from 'next/link';
+import { listIncidents } from '@/lib/store';
+import { CATEGORY_LABELS } from '@/lib/taxonomy';
+import PipelineDiagram from '@/components/PipelineDiagram';
+import { Metric, Panel, PriorityChip, StatusChip, timeAgo } from '@/components/ui';
 
-export default function Home() {
+export const dynamic = 'force-dynamic';
+
+export default async function OverviewPage() {
+  const incidents = await listIncidents();
+
+  const open = incidents.filter((i) => i.status !== 'verified_closed');
+  const p1 = open.filter((i) => i.priority.band === 'P1');
+  const breached = open.filter((i) => i.slaBreached);
+  const closed = incidents.filter((i) => i.status === 'verified_closed');
+  const totalReports = incidents.reduce((n, i) => n + i.reports.length, 0);
+  const collapsed = totalReports - incidents.length;
+  const rejected = incidents.filter((i) => i.verification && i.verification.verdict !== 'resolved');
+
+  const byBand = (['P1', 'P2', 'P3', 'P4'] as const).map((b) => ({
+    band: b,
+    count: open.filter((i) => i.priority.band === b).length,
+  }));
+  const maxBand = Math.max(1, ...byBand.map((b) => b.count));
+
   return (
-    <div className="flex flex-col flex-1 items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex flex-1 w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert h-5 w-[100px]"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div className="space-y-7">
+      <header>
+        <h1 className="text-[22px] font-semibold tracking-tight">Urban Incident Response</h1>
+        <p className="mt-1.5 max-w-[68ch] text-[14.5px] text-muted">
+          An intelligent coordination layer that turns fragmented citizen reports — photographs, written
+          descriptions, voice notes and location — into structured, prioritised incidents routed to the
+          department that owns them.
+        </p>
+      </header>
+
+      <section>
+        <div className="label mb-2.5">Closed-loop pipeline</div>
+        <PipelineDiagram />
+      </section>
+
+      <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
+        <Metric value={open.length} label="Open incidents" />
+        <Metric value={p1.length} label="P1 critical" tone={p1.length ? 'text-p1' : undefined} />
+        <Metric
+          value={breached.length}
+          label="Past response target"
+          tone={breached.length ? 'text-p2' : undefined}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the{" "}
-            <code className="rounded bg-black/[.06] px-1.5 py-0.5 font-mono text-[0.9em] dark:bg-white/[.08]">
-              page.tsx
-            </code>{" "}
-            file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
+        <Metric value={collapsed} label="Duplicate reports collapsed" />
+        <Metric value={closed.length} label="Verified & closed" tone="text-ok" />
+      </section>
+
+      <div className="grid gap-5 lg:grid-cols-[1.45fr_1fr]">
+        <Panel title="Active queue" dense>
+          <ul>
+            {open.slice(0, 7).map((inc) => (
+              <li key={inc.id} className="border-b border-line last:border-0">
+                <Link href={`/incidents/${inc.id}`} className="block px-4 py-3 hover:bg-sunken">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="min-w-0">
+                      <div className="flex items-center gap-2">
+                        <span className="mono text-faint">{inc.id}</span>
+                        <PriorityChip band={inc.priority.band} withLabel={false} />
+                        {inc.reports.length > 1 && (
+                          <span className="chip bg-sunken text-muted">{inc.reports.length} reports</span>
+                        )}
+                      </div>
+                      <div className="mt-1 truncate text-[14px] font-medium text-ink">{inc.title}</div>
+                      <div className="mt-0.5 truncate text-[12.5px] text-muted">
+                        {CATEGORY_LABELS[inc.category]} · {inc.department.name}
+                      </div>
+                    </div>
+                    <div className="shrink-0 text-right">
+                      <StatusChip status={inc.status} />
+                      <div className="mt-1.5 text-[11.5px] text-faint">{timeAgo(inc.createdAt)}</div>
+                    </div>
+                  </div>
+                </Link>
+              </li>
+            ))}
+          </ul>
+          <div className="border-t border-line px-4 py-2.5">
+            <Link href="/dashboard" className="text-[13px] font-medium text-accent hover:underline">
+              Open the operations console →
+            </Link>
+          </div>
+        </Panel>
+
+        <div className="space-y-5">
+          <Panel title="Open by priority">
+            <div className="space-y-2.5">
+              {byBand.map((b) => (
+                <div key={b.band} className="flex items-center gap-3">
+                  <span className="w-7 shrink-0">
+                    <PriorityChip band={b.band} withLabel={false} />
+                  </span>
+                  <div className="h-2 flex-1 rounded-xs bg-sunken">
+                    <div
+                      className={`h-2 rounded-xs ${
+                        b.band === 'P1'
+                          ? 'bg-p1'
+                          : b.band === 'P2'
+                            ? 'bg-p2'
+                            : b.band === 'P3'
+                              ? 'bg-p3'
+                              : 'bg-p4'
+                      }`}
+                      style={{ width: `${(b.count / maxBand) * 100}%` }}
+                    />
+                  </div>
+                  <span className="tnum w-5 text-right text-[13px] text-ink-2">{b.count}</span>
+                </div>
+              ))}
+            </div>
+          </Panel>
+
+          <Panel title="Verification loop">
+            <dl className="space-y-2 text-[13.5px]">
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted">Closures submitted</dt>
+                <dd className="tnum text-ink-2">{incidents.filter((i) => i.verification).length}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted">Rejected or partial</dt>
+                <dd className="tnum text-p1">{rejected.length}</dd>
+              </div>
+            </dl>
+            <p className="mt-3 border-t border-line pt-3 text-[12.5px] leading-snug text-muted">
+              A crew marking work done is a claim. The verification stage re-reads the after-photograph
+              against the original complaint, and an unresolved verdict reopens the incident instead of
+              closing it.
+            </p>
+          </Panel>
         </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert h-[14px] w-4"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={14}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
+      </div>
+
+      <Panel title="Scope — what is real and what is not">
+        <div className="grid gap-x-8 gap-y-2.5 text-[13.5px] sm:grid-cols-2">
+          <div>
+            <div className="mb-1.5 font-medium text-ok">Implemented end to end</div>
+            <ul className="space-y-1 text-muted">
+              <li>Multimodal extraction from image, text, voice transcript and GPS</li>
+              <li>Reverse geocoding (OpenStreetMap) and live weather (Open-Meteo)</li>
+              <li>Duplicate collapse: geo-temporal gate, then model adjudication</li>
+              <li>Transparent priority scoring with a visible breakdown</li>
+              <li>Department routing, dispatch packet, SLA and escalation rules</li>
+              <li>Resolution verification from after-evidence, with reopening</li>
+            </ul>
+          </div>
+          <div>
+            <div className="mb-1.5 font-medium text-p2">Simulated or out of scope</div>
+            <ul className="space-y-1 text-muted">
+              <li>
+                <strong className="font-medium text-ink-2">Traffic data</strong> — no free real-time feed
+                exists for this region; a clearly-flagged simulated provider sits behind the same interface
+              </li>
+              <li>
+                <strong className="font-medium text-ink-2">Authority notification</strong> — no municipality
+                exposes an ingestion API, so dispatch packets are generated in full and queued to an in-app
+                outbox rather than transmitted
+              </li>
+              <li>
+                <strong className="font-medium text-ink-2">Video ingestion</strong> — not implemented; the
+                design extends to it but it was descoped
+              </li>
+            </ul>
+          </div>
         </div>
-      </main>
+      </Panel>
     </div>
   );
 }

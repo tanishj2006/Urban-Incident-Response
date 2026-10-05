@@ -39,3 +39,10 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# Runtime data store — regenerated from the seed scenarios on first request
+/data/db.json
+
+# Uploaded evidence. The generated sample placeholders are kept.
+/public/uploads/*
+!/public/uploads/sample-*.svg

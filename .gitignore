@@ -54,3 +54,5 @@ next-env.d.ts
 /notebooks/data/
 /notebooks/results/
 /notebooks/.ipynb_checkpoints/
+__pycache__/
+*.pyc

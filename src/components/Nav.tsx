@@ -7,7 +7,6 @@ const ITEMS = [
   { href: '/', label: 'Overview', hint: 'System state' },
   { href: '/report', label: 'Report intake', hint: 'Submit evidence' },
   { href: '/dashboard', label: 'Operations', hint: 'Triage queue' },
-  { href: '/prompts', label: 'Prompt library', hint: 'Engineering notes' },
 ];
 
 export default function Nav() {

@@ -166,7 +166,7 @@ scenarios** on the operations console resets it at any time.
    loop closing.
 7. **Operations console** → **Run escalation sweep** → overdue incidents escalate with a
    stated reason and a named recipient.
-8. **Prompt library** — the four prompts and why each is worded as it is.
+8. **Prompt library** (optional, hidden from the sidebar — open `/prompts` directly) — the four prompts and why each is worded as it is.
 
 ---
 

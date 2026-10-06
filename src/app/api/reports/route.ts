@@ -73,7 +73,8 @@ export async function POST(req: Request) {
     return NextResponse.json({
       incidentId: result.incident.id,
       merged: result.merged,
-      priority: result.incident.priority,
+      priority: result.incident.recommendedPriority,
+      needsManualCategorisation: result.incident.needsManualCategorisation,
       department: result.incident.department.name,
       trace: result.trace,
     });

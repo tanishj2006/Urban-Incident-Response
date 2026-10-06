@@ -1,6 +1,7 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import type { Database, Incident } from './types';
+import { effectivePriority } from './types';
 import { buildSeed } from './seed';
 
 /**
@@ -49,7 +50,7 @@ export async function mutate<T>(fn: (db: Database) => Promise<T> | T): Promise<T
 export async function listIncidents(): Promise<Incident[]> {
   const db = await ensure();
   return [...db.incidents].sort((a, b) => {
-    const band = a.priority.band.localeCompare(b.priority.band);
+    const band = effectivePriority(a).band.localeCompare(effectivePriority(b).band);
     if (band !== 0) return band;
     return b.createdAt.localeCompare(a.createdAt);
   });

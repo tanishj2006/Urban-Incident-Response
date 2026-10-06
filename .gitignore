@@ -46,3 +46,11 @@ next-env.d.ts
 # Uploaded evidence. The generated sample placeholders are kept.
 /public/uploads/*
 !/public/uploads/sample-*.svg
+
+# Cached model responses (replayable, keeps demo runs off the API quota)
+/data/ai-cache/
+
+# Evaluation working files
+/notebooks/data/
+/notebooks/results/
+/notebooks/.ipynb_checkpoints/

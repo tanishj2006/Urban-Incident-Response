@@ -326,6 +326,7 @@ function TraceView({ result, onAgain }: { result: SubmitResult; onAgain: () => v
                       {s.engine === 'gemini' ? 'Gemini' : 'Rule engine'}
                     </span>
                   )}
+                  {s.cached && <span className="chip bg-p3-soft text-p3">cached</span>}
                 </div>
                 <p className="mt-1 text-[13px] leading-snug text-muted">{s.detail}</p>
               </div>

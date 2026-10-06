@@ -1,7 +1,7 @@
 import type { Metadata } from 'next';
 import Link from 'next/link';
 import Nav from '@/components/Nav';
-import { hasLiveEngine } from '@/lib/ai';
+import { hasLiveEngine, keyCount } from '@/lib/ai';
 import './globals.css';
 
 export const metadata: Metadata = {
@@ -12,6 +12,7 @@ export const metadata: Metadata = {
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
   const live = hasLiveEngine();
+  const keys = keyCount();
 
   return (
     <html lang="en">
@@ -42,7 +43,7 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
               </div>
               <p className="mt-1.5 text-[11.5px] leading-snug text-faint">
                 {live
-                  ? 'Live multimodal calls enabled. Falls back to rules on failure.'
+                  ? `${keys} key${keys > 1 ? 's' : ''} in rotation · ~${keys * 4 * 20} calls/day. Falls back to rules on failure, and repeated inputs are served from cache.`
                   : 'No GEMINI_API_KEY set. All AI stages run on deterministic rules and are badged as such.'}
               </p>
             </div>

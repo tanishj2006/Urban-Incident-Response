@@ -2,9 +2,15 @@
 import Link from 'next/link';
 import { notFound } from 'next/navigation';
 import { getIncident } from '@/lib/store';
-import { CATEGORY_LABELS, CHANNEL_LABELS, SLA_MINUTES } from '@/lib/taxonomy';
+import { CATEGORY_LABELS, CHANNEL_LABELS, SLA_MINUTES, STATUS_MEANINGS } from '@/lib/taxonomy';
+import { effectivePriority } from '@/lib/types';
 import PipelineDiagram from '@/components/PipelineDiagram';
-import { StatusActions, VerificationForm } from '@/components/IncidentActions';
+import {
+  CaseActions,
+  ClosureConfirm,
+  SeparateButton,
+  VerificationForm,
+} from '@/components/IncidentActions';
 import {
   EngineChip,
   Empty,
@@ -24,15 +30,16 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
   if (!inc) notFound();
 
   const sla = untilText(inc.slaDueAt);
-  const closed = inc.status === 'verified_closed';
+  const pr = effectivePriority(inc);
+  const closed = inc.status === 'closed';
   // The response clock stops once the crew reports completion; from there the
   // verification stage owns the incident, with its own escalation path.
-  const clockStopped = closed || inc.status === 'resolved_pending_verification';
+  const clockStopped = closed || inc.status === 'resolved';
   const activeStage = closed
     ? 'Verify'
-    : inc.status === 'escalated' || inc.escalations.length > 0
+    : inc.escalations.length > 0
       ? 'Escalate'
-      : inc.status === 'resolved_pending_verification' || inc.status === 'reopened'
+      : inc.status === 'resolved'
         ? 'Verify'
         : inc.status === 'in_progress'
           ? 'Respond'
@@ -47,10 +54,18 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
       <header className="panel p-5">
         <div className="flex flex-wrap items-center gap-2">
           <span className="mono text-faint">{inc.id}</span>
-          <PriorityChip band={inc.priority.band} />
+          <PriorityChip band={pr.band} />
+          {inc.priorityOverride && (
+            <span className="chip bg-accent-soft text-accent">
+              set by {inc.priorityOverride.by} · recommended {inc.recommendedPriority.band}
+            </span>
+          )}
           <StatusChip status={inc.status} />
+          {inc.needsManualCategorisation && (
+            <span className="chip bg-p2-soft text-p2">awaiting manual categorisation</span>
+          )}
           {inc.reports.length > 1 && (
-            <span className="chip bg-sunken text-muted">{inc.reports.length} reports merged</span>
+            <span className="chip bg-sunken text-muted">{inc.reports.length} reports linked</span>
           )}
           {inc.slaBreached && !clockStopped && (
             <span className="chip bg-p1-soft text-p1">Past response target</span>
@@ -62,7 +77,20 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
 
         <div className="mt-4 grid gap-x-8 gap-y-0 text-[13.5px] sm:grid-cols-2">
           <dl>
-            <KeyValue k="Category" v={CATEGORY_LABELS[inc.category]} />
+            <KeyValue
+              k="Category"
+              v={
+                <>
+                  {CATEGORY_LABELS[inc.category]}
+                  {inc.categoryOverride && (
+                    <span className="mt-0.5 block text-[11.5px] text-faint">
+                      Re-categorised by {inc.categoryOverride.by} from{' '}
+                      {CATEGORY_LABELS[inc.categoryOverride.from]}
+                    </span>
+                  )}
+                </>
+              }
+            />
             <KeyValue k="Subtype" v={inc.subtype} />
             <KeyValue k="Location" v={inc.location.address ?? 'Address unresolved'} />
             <KeyValue
@@ -74,16 +102,17 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
             <KeyValue k="Department" v={inc.department.name} />
             <KeyValue k="Assigned to" v={inc.assignee ?? <span className="text-faint">Unassigned</span>} />
             <KeyValue k="Opened" v={`${timeAgo(inc.createdAt)} · ${new Date(inc.createdAt).toLocaleString('en-IN')}`} />
+            <KeyValue k="Status means" v={<span className="text-[12.5px]">{STATUS_MEANINGS[inc.status]}</span>} />
             <KeyValue
               k="Response target"
               v={
                 closed ? (
-                  <span className="text-ok">Met — closed after verification</span>
+                  <span className="text-ok">Closed by {inc.closure?.by ?? 'an official'}</span>
                 ) : clockStopped ? (
-                  <span className="text-muted">Clock stopped — awaiting verification</span>
+                  <span className="text-muted">Clock stopped — awaiting closure confirmation</span>
                 ) : (
                   <span className={sla.overdue ? 'font-medium text-p1' : ''}>
-                    {sla.text} · {SLA_MINUTES[inc.priority.band]} min target
+                    {sla.text} · {SLA_MINUTES[pr.band]} min target
                   </span>
                 )
               }
@@ -127,6 +156,9 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
                         </span>
                       ))}
                       <span className="ml-auto text-[11.5px] text-faint">{timeAgo(r.receivedAt)}</span>
+                      {inc.reports.length > 1 && (
+                        <SeparateButton incidentId={inc.id} reportId={r.id} />
+                      )}
                     </div>
 
                     <div className="mt-3 grid gap-3 sm:grid-cols-[150px_1fr]">
@@ -193,21 +225,32 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
             </ul>
           </Panel>
 
-          {inc.mergeLog.length > 0 && (
-            <Panel title="Duplicate-collapse decisions" dense>
+          {inc.linkLog.length > 0 && (
+            <Panel title="Linking decisions" dense>
               <ul>
-                {inc.mergeLog.map((m, i) => (
+                {inc.linkLog.map((m, i) => (
                   <li key={i} className="border-b border-line px-4 py-3 last:border-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="mono text-faint">{m.reportId}</span>
-                      <span className="chip bg-ok-soft text-ok">merged · {m.confidence.toFixed(2)}</span>
-                      <EngineChip engine={m.engine} />
+                      {m.action === 'linked' ? (
+                        <span className="chip bg-ok-soft text-ok">
+                          linked{m.confidence !== undefined ? ` · ${m.confidence.toFixed(2)}` : ''}
+                        </span>
+                      ) : (
+                        <span className="chip bg-p2-soft text-p2">separated</span>
+                      )}
+                      {m.engine && <EngineChip engine={m.engine} />}
+                      {m.by && <span className="chip bg-sunken text-muted">by {m.by}</span>}
                       <span className="ml-auto text-[11.5px] text-faint">{timeAgo(m.at)}</span>
                     </div>
                     <p className="mt-1.5 text-[13px] leading-snug text-muted">{m.reason}</p>
                   </li>
                 ))}
               </ul>
+              <p className="border-t border-line px-4 py-2.5 text-[11.5px] leading-snug text-faint">
+                Linking is a similarity judgement and will be wrong in both directions. Each report stays
+                individually visible above and can be separated back out.
+              </p>
             </Panel>
           )}
 
@@ -229,14 +272,25 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
 
         {/* ────────────────────────── Right column ─────────────────────────── */}
         <div className="space-y-5">
-          <Panel title="Case actions">
-            <StatusActions id={inc.id} status={inc.status} assignee={inc.assignee} />
+          <Panel title="Official actions">
+            <CaseActions incident={inc} />
           </Panel>
 
-          <Panel title={`Priority — ${inc.priority.score}/100`}>
+          <Panel title="Closure">
+            <ClosureConfirm incident={inc} />
+          </Panel>
+
+          <Panel title={`Priority — recommended ${inc.recommendedPriority.score}/100`}>
+            {inc.priorityOverride && (
+              <p className="mb-3 rounded-sm bg-accent-soft px-2.5 py-2 text-[12.5px] leading-snug text-accent-ink">
+                {inc.priorityOverride.by} set this to <strong>{inc.priorityOverride.band}</strong>, against a
+                recommendation of {inc.recommendedPriority.band}.
+                {inc.priorityOverride.reason && ` Reason: ${inc.priorityOverride.reason}`}
+              </p>
+            )}
             <table className="w-full text-[13px]">
               <tbody>
-                {inc.priority.factors.map((f, i) => (
+                {inc.recommendedPriority.factors.map((f, i) => (
                   <tr key={i} className="border-b border-line last:border-0">
                     <td className="py-1.5 pr-2 align-top text-ink-2">
                       {f.label}
@@ -247,17 +301,18 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
                 ))}
                 <tr className="border-t-2 border-line-strong">
                   <td className="pt-2 text-[13.5px] font-semibold text-ink">
-                    Total → {inc.priority.band}
+                    Total → {inc.recommendedPriority.band} recommended
                   </td>
                   <td className="tnum pt-2 text-right text-[13.5px] font-semibold text-ink">
-                    {inc.priority.score}
+                    {inc.recommendedPriority.score}
                   </td>
                 </tr>
               </tbody>
             </table>
             <p className="mt-3 border-t border-line pt-2.5 text-[11.5px] leading-snug text-muted">
               Computed by a fixed formula, not by the model. The model supplies the severity band and hazard
-              flags; the arithmetic above converts them. Thresholds: P1 ≥ 75, P2 ≥ 60, P3 ≥ 40.
+              flags; the arithmetic above converts them. Thresholds: P1 ≥ 75, P2 ≥ 60, P3 ≥ 40. This is a
+              recommendation — an official may override it, and both values stay on the record.
             </p>
           </Panel>
 
@@ -324,7 +379,7 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
             </Panel>
           )}
 
-          <Panel title="Resolution verification">
+          <Panel title="Resolution verification — advisory">
             {inc.verification ? (
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -352,7 +407,11 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
                   />
                 )}
                 <p className="text-[13px] leading-snug text-ink-2">{inc.verification.rationale}</p>
-                {inc.verification.verdict !== 'resolved' && (
+                <p className="border-t border-line pt-2.5 text-[11.5px] leading-snug text-muted">
+                  This verdict is a recommendation to the reviewing official. It cannot close the incident
+                  on its own.
+                </p>
+                {!closed && (
                   <div className="border-t border-line pt-3">
                     <div className="label mb-2">Re-submit after-evidence</div>
                     <VerificationForm id={inc.id} />

@@ -2,7 +2,14 @@ import { runPrompt } from './ai';
 import { mockDedupe, mockExtract, mockFuse, mockVerify } from './mock';
 import { DEDUPE_PROMPT, EXTRACTION_PROMPT, FUSION_PROMPT, VERIFICATION_PROMPT } from './prompts';
 import { buildContext, describeContext, distanceMetres, reverseGeocode } from './context';
-import { CATEGORY_LABELS, DEDUPE_GATES, PRIORITY_LABELS, SLA_MINUTES, routeToDepartment } from './taxonomy';
+import {
+  CATEGORY_LABELS,
+  CONFIDENCE_THRESHOLD,
+  DEDUPE_GATES,
+  PRIORITY_LABELS,
+  SLA_MINUTES,
+  routeToDepartment,
+} from './taxonomy';
 import type {
   Database,
   DispatchPayload,
@@ -19,7 +26,7 @@ import type {
   SeverityBand,
   VerificationResult,
 } from './types';
-import { EMPTY_HAZARDS } from './types';
+import { EMPTY_HAZARDS, effectivePriority } from './types';
 import { nextIncidentId } from './ids';
 
 /**
@@ -38,6 +45,8 @@ export interface TraceStep {
   detail: string;
   ms: number;
   engine?: Engine;
+  /** The model result was replayed from cache rather than re-inferred. */
+  cached?: boolean;
 }
 
 const SEVERITY_POINTS: Record<SeverityBand, number> = {
@@ -58,6 +67,13 @@ const HAZARD_POINTS: { key: keyof HazardFlags; points: number; label: string }[]
 
 const SCALE_POINTS = { wide_area: 12, neighbourhood: 8, street: 4, individual: 0 } as const;
 const SEVERITY_RANK: SeverityBand[] = ['low', 'medium', 'high', 'critical'];
+
+/**
+ * Statuses the response clock does not run against. `resolved` is here because
+ * the crew has reported completion — from that point the verification step owns
+ * the incident, and a rejected closure sends it back to `in_progress`.
+ */
+export const CLOCK_STOPPED: string[] = ['closed', 'resolved'];
 
 // ─────────────────────────────── Stage 2: Understand ───────────────────────────
 
@@ -98,10 +114,11 @@ export async function understand(report: RawReport): Promise<{ extraction: Extra
       label: 'Multimodal extraction',
       status: call.error ? 'fallback' : 'ok',
       detail: call.error
-        ? `Live model unavailable (${call.error.slice(0, 90)}) — rule engine used.`
-        : `Classified as ${CATEGORY_LABELS[extraction.category]}, severity ${extraction.severityBand}, confidence ${extraction.confidence}.`,
+        ? `Live model unavailable (${call.error.slice(0, 110)}) — rule engine used.`
+        : `${call.model ?? 'model'} classified this as ${CATEGORY_LABELS[extraction.category]}, severity ${extraction.severityBand}, confidence ${extraction.confidence}.${call.cached ? ' Replayed from cache — identical input was inferred earlier.' : ''}`,
       ms: call.latencyMs,
       engine: call.engine,
+      cached: call.cached,
     },
   };
 }
@@ -117,7 +134,7 @@ export function dedupeCandidates(
   const gate = DEDUPE_GATES[category];
   const now = new Date(report.receivedAt).getTime();
   return db.incidents.filter((inc) => {
-    if (inc.status === 'verified_closed') return false;
+    if (inc.status === 'closed') return false;
     if (inc.category !== category) return false;
     const d = distanceMetres(inc.location, report.location);
     if (d > gate.radiusM) return false;
@@ -259,13 +276,14 @@ function hazardNotes(extractions: Extraction[]): string[] {
 
 export function buildDispatch(incident: Incident): DispatchPayload {
   const loc = incident.location;
+  const band = effectivePriority(incident).band;
   return {
     payloadId: `DSP-${incident.id.replace('INC-', '')}-${String(Date.now()).slice(-4)}`,
     generatedAt: new Date().toISOString(),
     incidentId: incident.id,
-    priority: incident.priority.band,
+    priority: band,
     department: incident.department.name,
-    subject: `[${incident.priority.band} ${PRIORITY_LABELS[incident.priority.band]}] ${incident.title}`,
+    subject: `[${band} ${PRIORITY_LABELS[band]}] ${incident.title}`,
     body: incident.fusedSummary,
     locationLine: `${loc.address ?? 'Unresolved address'} — ${loc.lat.toFixed(5)}, ${loc.lng.toFixed(5)}`,
     evidenceCount: incident.reports.length,
@@ -374,8 +392,9 @@ export async function processReport(db: Database, report: RawReport): Promise<In
     target.extractions.push(extraction);
     target.updatedAt = now;
     if (mergeInfo) {
-      target.mergeLog.push({
+      target.linkLog.push({
         at: now,
+        action: 'linked',
         reportId: report.id,
         confidence: mergeInfo.confidence,
         reason: mergeInfo.reason,
@@ -385,8 +404,8 @@ export async function processReport(db: Database, report: RawReport): Promise<In
     target.timeline.push({
       at: now,
       actor: 'System',
-      event: 'Corroborating report merged',
-      detail: `Report ${report.id} via ${report.channel}. Evidence now ${target.reports.length} reports.`,
+      event: 'Corroborating report linked',
+      detail: `Report ${report.id} via ${report.channel}. Evidence now ${target.reports.length} reports. An official may separate this link.`,
     });
     target.context = context;
     await finalise(target, trace);
@@ -405,17 +424,21 @@ export async function processReport(db: Database, report: RawReport): Promise<In
     reports: [report],
     extractions: [extraction],
     context,
-    priority: { score: 0, band: 'P4', factors: [] },
+    recommendedPriority: { score: 0, band: 'P4', factors: [] },
+    needsManualCategorisation:
+      extraction.needsHumanReview ||
+      extraction.confidence < CONFIDENCE_THRESHOLD ||
+      extraction.category === 'other',
     department: routeToDepartment(extraction.category, hazardNotes([extraction])),
     recommendedActions: [],
-    status: 'new',
+    status: 'reported',
     slaDueAt: now,
     slaBreached: false,
     escalations: [],
     timeline: [
       { at: now, actor: 'System', event: 'Incident created', detail: `From report ${report.id} (${report.channel}).` },
     ],
-    mergeLog: [],
+    linkLog: [],
   };
 
   db.incidents.push(incident);
@@ -438,16 +461,27 @@ export async function finalise(incident: Incident, trace: TraceStep[]): Promise<
     incident.context.traffic?.congestionLevel === 'heavy' ||
     incident.context.traffic?.congestionLevel === 'gridlock';
 
-  incident.priority = computePriority(incident.extractions, incident.reports.length, { rain, heavyTraffic }, incident.createdAt);
-  const dueMs = new Date(incident.createdAt).getTime() + SLA_MINUTES[incident.priority.band] * 60000;
+  incident.recommendedPriority = computePriority(
+    incident.extractions,
+    incident.reports.length,
+    { rain, heavyTraffic },
+    incident.createdAt,
+  );
+
+  // The official's override survives a rescore. Stage 1 requires both the
+  // recommendation and the final decision to remain on the record.
+  const effective = effectivePriority(incident);
+  const dueMs = new Date(incident.createdAt).getTime() + SLA_MINUTES[effective.band] * 60000;
   incident.slaDueAt = new Date(dueMs).toISOString();
-  incident.slaBreached = Date.now() > dueMs && !['verified_closed', 'resolved_pending_verification'].includes(incident.status);
+  incident.slaBreached = Date.now() > dueMs && !CLOCK_STOPPED.includes(incident.status);
 
   trace.push({
     stage: 'Prioritise',
     label: 'Deterministic scoring',
     status: 'ok',
-    detail: `${incident.priority.score}/100 → ${incident.priority.band} (${PRIORITY_LABELS[incident.priority.band]}). Response target ${SLA_MINUTES[incident.priority.band]} min.`,
+    detail: incident.priorityOverride
+      ? `${incident.recommendedPriority.score}/100 → ${incident.recommendedPriority.band} recommended; ${incident.priorityOverride.band} set by ${incident.priorityOverride.by}. Response target ${SLA_MINUTES[effective.band]} min.`
+      : `${incident.recommendedPriority.score}/100 → ${incident.recommendedPriority.band} (${PRIORITY_LABELS[incident.recommendedPriority.band]}). Response target ${SLA_MINUTES[effective.band]} min. This is a recommendation an official may override.`,
     ms: 0,
   });
 
@@ -505,9 +539,12 @@ export async function finalise(incident: Incident, trace: TraceStep[]): Promise<
     stage: 'Combine',
     label: 'Situation report fused',
     status: fusion.error ? 'fallback' : 'ok',
-    detail: fusion.error ? `Live model unavailable — playbook used.` : `${fusion.data.recommendedActions.length} recommended actions generated.`,
+    detail: fusion.error
+      ? `Live model unavailable (${fusion.error.slice(0, 110)}) — departmental playbook used.`
+      : `${fusion.model ?? 'model'} generated ${fusion.data.recommendedActions.length} recommended actions.${fusion.cached ? ' Replayed from cache.' : ''}`,
     ms: fusion.latencyMs,
     engine: fusion.engine,
+    cached: fusion.cached,
   });
 
   // Stage 6 — Notify
@@ -554,36 +591,29 @@ export async function verifyResolution(
 // ──────────────────────────── Stage 9: Escalate ────────────────────────────────
 
 /**
- * Statuses the SLA clock does not run against.
+ * Rule-based escalation sweep. Stage 1 §2.2 Step 9: "Escalation is intended to
+ * be automatic in the narrow sense that the system raises the flag; what happens
+ * next is a human decision." So this marks and notifies — it never acts.
  *
- * `resolved_pending_verification` is here deliberately: the crew has reported
- * completion, so escalating them for slowness would be wrong. That incident is
- * not unwatched — if verification rejects the closure it moves to `reopened`,
- * which the first rule below escalates on its own terms.
- */
-const TERMINAL: string[] = ['verified_closed', 'resolved_pending_verification'];
-
-/**
- * Rule-based escalation sweep. Run on demand from the dashboard; in production
- * this would be a cron job. Rules are intentionally simple and inspectable.
+ * Run on demand from the dashboard; in production this would be a scheduled job.
  */
 export function escalationSweep(incidents: Incident[]): { incident: Incident; escalation: Escalation }[] {
   const out: { incident: Incident; escalation: Escalation }[] = [];
   const now = Date.now();
 
   for (const inc of incidents) {
-    if (TERMINAL.includes(inc.status)) continue;
+    if (CLOCK_STOPPED.includes(inc.status)) continue;
 
     const due = new Date(inc.slaDueAt).getTime();
     const overdueMin = (now - due) / 60000;
-    const target = SLA_MINUTES[inc.priority.band];
+    const target = SLA_MINUTES[effectivePriority(inc).band];
     const currentLevel = inc.escalations.length;
 
     let level = 0;
     let reason = '';
     let notified = '';
 
-    if (inc.verification?.verdict === 'unresolved' && inc.status === 'reopened') {
+    if (inc.verification?.verdict === 'unresolved') {
       level = Math.max(currentLevel + 1, 2);
       reason = 'Closure rejected at verification — the reported problem is still visible in the after-evidence.';
       notified = 'Zonal Officer';
@@ -614,4 +644,171 @@ export function escalationSweep(incidents: Incident[]): { incident: Incident; es
   }
 
   return out;
+}
+
+// ───────────────────── Human-in-the-loop corrections ───────────────────────────
+
+/**
+ * Separate a report the system linked into an incident, and give it an incident
+ * of its own.
+ *
+ * Stage 1 §2.2 Step 5 is explicit: "linking does not mean merging … an
+ * authorised official can separate reports if the grouping is found to be
+ * incorrect." Duplicate detection is a similarity judgement and will be wrong in
+ * both directions, so the grouping has to be reversible or the system quietly
+ * loses genuine incidents inside wrong clusters.
+ */
+export async function separateReport(
+  db: Database,
+  incidentId: string,
+  reportId: string,
+  by: string,
+): Promise<{ ok: true; newIncidentId: string } | { ok: false; error: string }> {
+  const source = db.incidents.find((i) => i.id === incidentId);
+  if (!source) return { ok: false, error: 'Incident not found.' };
+  if (source.reports.length < 2) {
+    return { ok: false, error: 'This incident has only one report, so there is nothing to separate.' };
+  }
+
+  const idx = source.reports.findIndex((r) => r.id === reportId);
+  if (idx === -1) return { ok: false, error: 'Report not found on this incident.' };
+
+  const [report] = source.reports.splice(idx, 1);
+  const exIdx = source.extractions.findIndex((e) => e.reportId === reportId);
+  const extraction =
+    exIdx === -1 ? source.extractions[0] : source.extractions.splice(exIdx, 1)[0];
+
+  const now = new Date().toISOString();
+  const trace: TraceStep[] = [];
+
+  source.linkLog.push({
+    at: now,
+    action: 'separated',
+    reportId,
+    reason: 'An official judged this report to describe a different event.',
+    by,
+  });
+  source.timeline.push({
+    at: now,
+    actor: by,
+    event: 'Linked report separated',
+    detail: `Report ${reportId} was removed from this incident and raised as its own. Evidence now ${source.reports.length} report(s).`,
+  });
+
+  const fresh: Incident = {
+    id: nextIncidentId(db),
+    createdAt: now,
+    updatedAt: now,
+    title: extraction.summary.slice(0, 80),
+    category: extraction.category,
+    subtype: extraction.subtype,
+    fusedSummary: extraction.summary,
+    location: { ...report.location },
+    reports: [report],
+    extractions: [{ ...extraction, reportId: report.id }],
+    context: source.context,
+    recommendedPriority: { score: 0, band: 'P4', factors: [] },
+    needsManualCategorisation: extraction.needsHumanReview || extraction.category === 'other',
+    department: routeToDepartment(extraction.category, hazardNotes([extraction])),
+    recommendedActions: [],
+    status: 'reported',
+    slaDueAt: now,
+    slaBreached: false,
+    escalations: [],
+    timeline: [
+      {
+        at: now,
+        actor: by,
+        event: 'Incident created by separation',
+        detail: `Separated from ${source.id} because an official judged it a different event.`,
+      },
+    ],
+    linkLog: [
+      {
+        at: now,
+        action: 'separated',
+        reportId,
+        reason: `Separated from ${source.id} by an official.`,
+        by,
+      },
+    ],
+  };
+
+  db.incidents.push(fresh);
+  await finalise(source, trace);
+  await finalise(fresh, trace);
+
+  return { ok: true, newIncidentId: fresh.id };
+}
+
+/**
+ * Apply an official's re-categorisation.
+ *
+ * Stage 1 §2.2 Step 4 sends low-confidence and disagreeing classifications to
+ * "manual categorisation on the dashboard" rather than forcing a category. This
+ * is where that correction lands: the original model category stays on the
+ * record in `categoryOverride.from`, and routing and scoring are re-run.
+ */
+export async function applyRecategorisation(
+  incident: Incident,
+  to: IncidentCategory,
+  by: string,
+): Promise<void> {
+  const from = incident.category;
+  if (from === to) {
+    incident.needsManualCategorisation = false;
+    return;
+  }
+  const at = new Date().toISOString();
+
+  incident.categoryOverride = { from, to, by, at };
+  incident.category = to;
+  incident.needsManualCategorisation = false;
+  incident.timeline.push({
+    at,
+    actor: by,
+    event: 'Re-categorised by official',
+    detail: `${CATEGORY_LABELS[from]} → ${CATEGORY_LABELS[to]}. Routing and priority recomputed.`,
+  });
+
+  await finalise(incident, []);
+}
+
+/**
+ * Record an official's priority override. The recommendation is untouched; both
+ * values stay on the incident so a disagreement can be reviewed later.
+ */
+export function applyPriorityOverride(
+  incident: Incident,
+  band: PriorityBand,
+  by: string,
+  reason?: string,
+): void {
+  const at = new Date().toISOString();
+  const recommended = incident.recommendedPriority.band;
+
+  if (band === recommended) {
+    delete incident.priorityOverride;
+    incident.timeline.push({
+      at,
+      actor: by,
+      event: 'Priority override cleared',
+      detail: `Reverted to the recommended ${recommended}.`,
+    });
+  } else {
+    incident.priorityOverride = { band, by, at, reason };
+    incident.timeline.push({
+      at,
+      actor: by,
+      event: 'Priority overridden',
+      detail: `Recommended ${recommended}, set to ${band} by ${by}.${reason ? ` Reason: ${reason}` : ''}`,
+    });
+  }
+
+  const effective = effectivePriority(incident);
+  const dueMs = new Date(incident.createdAt).getTime() + SLA_MINUTES[effective.band] * 60000;
+  incident.slaDueAt = new Date(dueMs).toISOString();
+  incident.slaBreached = Date.now() > dueMs && !CLOCK_STOPPED.includes(incident.status);
+  incident.updatedAt = at;
+  if (incident.dispatch) incident.dispatch = buildDispatch(incident);
 }

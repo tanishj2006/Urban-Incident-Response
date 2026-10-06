@@ -46,30 +46,27 @@ export async function POST(req: Request, ctx: { params: Promise<{ id: string }> 
       inc.verification = verification;
       inc.updatedAt = verification.at;
 
-      if (verification.verdict === 'resolved') {
-        inc.status = 'verified_closed';
-        inc.slaBreached = false;
-        inc.timeline.push({
-          at: verification.at,
-          actor: 'System',
-          event: 'Resolution verified',
-          detail: `After-evidence accepted at ${verification.confidence} confidence. Incident closed.`,
-        });
-      } else if (verification.verdict === 'partial') {
-        inc.status = 'resolved_pending_verification';
-        inc.timeline.push({
-          at: verification.at,
-          actor: 'System',
-          event: 'Partial resolution — held open',
-          detail: verification.rationale,
-        });
-      } else {
-        inc.status = 'reopened';
+      // This stage is ADVISORY. It never closes an incident: Stage 1 §1.3.2
+      // excludes "final closure without human confirmation", so the best a
+      // positive verdict can do is move the incident to `resolved` and wait.
+      if (verification.verdict === 'unresolved') {
+        inc.status = 'in_progress';
         inc.timeline.push({
           at: verification.at,
           actor: 'System',
           event: 'Closure rejected at verification',
-          detail: `${verification.rationale} Incident reopened.`,
+          detail: `${verification.rationale} Returned to in progress.`,
+        });
+      } else {
+        inc.status = 'resolved';
+        inc.timeline.push({
+          at: verification.at,
+          actor: 'System',
+          event:
+            verification.verdict === 'resolved'
+              ? 'Verification suggests resolved'
+              : 'Verification suggests partial resolution',
+          detail: `${verification.rationale} Advisory only — awaiting an official's closure confirmation.`,
         });
       }
       return { status: inc.status };

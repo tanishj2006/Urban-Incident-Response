@@ -8,17 +8,18 @@
  * "why is this P1?" and get an arithmetic answer, not "the model said so".
  */
 
+/** The ten categories of Stage 1, Table 2.2. Closed set, with "other" as the
+ *  absorbing class so a report is never forced into a wrong category. */
 export type IncidentCategory =
-  | 'road_accident'
+  | 'accident'
   | 'fire'
   | 'flooding'
-  | 'pothole'
   | 'garbage'
-  | 'water_leak'
+  | 'pothole'
   | 'fallen_tree'
+  | 'water_leak'
+  | 'road_damage'
   | 'streetlight'
-  | 'sewage'
-  | 'building_collapse'
   | 'other';
 
 export type SeverityBand = 'critical' | 'high' | 'medium' | 'low';
@@ -28,14 +29,21 @@ export type AffectedScale = 'individual' | 'street' | 'neighbourhood' | 'wide_ar
 export type Channel = 'citizen_app' | 'phone_call' | 'sms' | 'social_media' | 'field_officer';
 export type Modality = 'image' | 'text' | 'voice' | 'location';
 
+/**
+ * The lifecycle of Stage 1, Table 2.5 and Figure 2.2.
+ *
+ * `resolved` means the department has reported completion and submitted
+ * post-action evidence. `closed` means an authorised official has confirmed it.
+ * Nothing in this system may move an incident to `closed` on its own — see
+ * Stage 1 §1.3.2, which excludes "final closure without human confirmation".
+ */
 export type IncidentStatus =
-  | 'new'
-  | 'acknowledged'
+  | 'reported'
+  | 'verified'
   | 'assigned'
   | 'in_progress'
-  | 'resolved_pending_verification'
-  | 'verified_closed'
-  | 'reopened'
+  | 'resolved'
+  | 'closed'
   | 'escalated';
 
 /** Which inference engine produced a given AI artifact. Surfaced in the UI. */
@@ -193,7 +201,26 @@ export interface Incident {
   reports: RawReport[];
   extractions: Extraction[];
   context: IncidentContext;
-  priority: PriorityResult;
+
+  /** What the scoring rules computed. Never mutated by an official. */
+  recommendedPriority: PriorityResult;
+  /**
+   * An official's override. Stage 1 §2.2 Step 6: "The system records both the
+   * recommended and the final priority so that disagreements can be reviewed
+   * later." Hence two fields rather than one mutable one.
+   */
+  priorityOverride?: { band: PriorityBand; by: string; at: string; reason?: string };
+
+  /** An official's re-categorisation, when the model got it wrong or deferred. */
+  categoryOverride?: { from: IncidentCategory; to: IncidentCategory; by: string; at: string };
+
+  /**
+   * Set when no extraction reached the confidence threshold, or extractions
+   * disagree. Stage 1 §2.2 Step 4: such a report "is not forced into a
+   * category: it is flagged for manual categorisation on the dashboard".
+   */
+  needsManualCategorisation: boolean;
+
   department: DepartmentRouting;
   recommendedActions: string[];
   status: IncidentStatus;
@@ -201,17 +228,38 @@ export interface Incident {
   slaDueAt: string;
   slaBreached: boolean;
   dispatch?: DispatchPayload;
+
+  /** Advisory only. Closure is `closure` below, which requires a human. */
   verification?: VerificationResult;
+  /** Recorded only when an authorised official confirms closure. */
+  closure?: { by: string; at: string; note?: string };
+
   escalations: Escalation[];
   timeline: TimelineEntry[];
-  /** Audit trail of merge decisions made by the dedupe stage. */
-  mergeLog: {
+
+  /**
+   * Audit trail of linking decisions. Stage 1 §2.2 Step 5 is explicit that
+   * "linking does not mean merging" — a grouping an official disagrees with
+   * must be separable, so separations are recorded here too.
+   */
+  linkLog: {
     at: string;
+    action: 'linked' | 'separated';
     reportId: string;
-    confidence: number;
+    confidence?: number;
     reason: string;
-    engine: Engine;
+    engine?: Engine;
+    by?: string;
   }[];
+}
+
+/** Effective priority = official's override if present, else the recommendation. */
+export function effectivePriority(i: Incident): PriorityResult {
+  if (!i.priorityOverride) return i.recommendedPriority;
+  return {
+    ...i.recommendedPriority,
+    band: i.priorityOverride.band,
+  };
 }
 
 export interface Database {

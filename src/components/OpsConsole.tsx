@@ -5,6 +5,7 @@ import Link from 'next/link';
 import dynamic from 'next/dynamic';
 import { useRouter } from 'next/navigation';
 import type { Incident, PriorityBand } from '@/lib/types';
+import { effectivePriority } from '@/lib/types';
 import { CATEGORY_LABELS } from '@/lib/taxonomy';
 import { PriorityChip, StatusChip, timeAgo, untilText } from './ui';
 
@@ -14,7 +15,7 @@ const IncidentMap = dynamic(() => import('./IncidentMap'), {
 });
 
 type View = 'table' | 'map';
-type Scope = 'open' | 'all' | 'closed';
+type Scope = 'open' | 'all' | 'closed' | 'triage';
 
 export default function OpsConsole({ incidents }: { incidents: Incident[] }) {
   const router = useRouter();
@@ -30,13 +31,18 @@ export default function OpsConsole({ incidents }: { incidents: Incident[] }) {
     () => Array.from(new Set(incidents.map((i) => i.department.name))).sort(),
     [incidents],
   );
+  const triageCount = useMemo(
+    () => incidents.filter((i) => i.needsManualCategorisation).length,
+    [incidents],
+  );
 
   const rows = useMemo(() => {
     const needle = q.trim().toLowerCase();
     return incidents.filter((i) => {
-      if (scope === 'open' && i.status === 'verified_closed') return false;
-      if (scope === 'closed' && i.status !== 'verified_closed') return false;
-      if (band !== 'all' && i.priority.band !== band) return false;
+      if (scope === 'open' && i.status === 'closed') return false;
+      if (scope === 'closed' && i.status !== 'closed') return false;
+      if (scope === 'triage' && !i.needsManualCategorisation) return false;
+      if (band !== 'all' && effectivePriority(i).band !== band) return false;
       if (dept !== 'all' && i.department.name !== dept) return false;
       if (needle) {
         const hay = `${i.id} ${i.title} ${i.fusedSummary} ${i.location.address ?? ''}`.toLowerCase();
@@ -93,6 +99,7 @@ export default function OpsConsole({ incidents }: { incidents: Incident[] }) {
           onChange={(v) => setScope(v as Scope)}
           options={[
             ['open', 'Open'],
+            ['triage', `Needs categorising${triageCount ? ` (${triageCount})` : ''}`],
             ['closed', 'Closed'],
             ['all', 'All'],
           ]}
@@ -139,7 +146,7 @@ export default function OpsConsole({ incidents }: { incidents: Incident[] }) {
             lat: i.location.lat,
             lng: i.location.lng,
             title: i.title,
-            band: i.priority.band,
+            band: effectivePriority(i).band,
             reports: i.reports.length,
           }))}
         />
@@ -162,10 +169,10 @@ export default function OpsConsole({ incidents }: { incidents: Incident[] }) {
               <tbody>
                 {rows.map((i) => {
                   const sla = untilText(i.slaDueAt);
+                  const pr = effectivePriority(i);
                   // The response clock stops once the crew reports completion;
                   // from there the verification stage owns the incident.
-                  const clockStopped =
-                    i.status === 'verified_closed' || i.status === 'resolved_pending_verification';
+                  const clockStopped = i.status === 'closed' || i.status === 'resolved';
                   return (
                     <tr key={i.id} className="border-b border-line last:border-0 hover:bg-sunken">
                       <td className="px-3 py-2.5 align-top">
@@ -175,14 +182,23 @@ export default function OpsConsole({ incidents }: { incidents: Incident[] }) {
                         </Link>
                       </td>
                       <td className="px-3 py-2.5 align-top">
-                        <PriorityChip band={i.priority.band} withLabel={false} />
-                        <span className="tnum mt-1 block text-[11.5px] text-faint">{i.priority.score}/100</span>
+                        <PriorityChip band={pr.band} withLabel={false} />
+                        <span className="tnum mt-1 block text-[11.5px] text-faint">
+                          {i.priorityOverride
+                            ? `set · rec. ${i.recommendedPriority.band}`
+                            : `${i.recommendedPriority.score}/100`}
+                        </span>
                       </td>
-                      <td className="px-3 py-2.5 align-top text-muted">{CATEGORY_LABELS[i.category]}</td>
+                      <td className="px-3 py-2.5 align-top text-muted">
+                        {CATEGORY_LABELS[i.category]}
+                        {i.needsManualCategorisation && (
+                          <span className="chip mt-1 block w-fit bg-p2-soft text-p2">needs categorising</span>
+                        )}
+                      </td>
                       <td className="px-3 py-2.5 align-top text-muted">{i.department.name}</td>
                       <td className="tnum px-3 py-2.5 text-right align-top text-ink-2">
                         {i.reports.length}
-                        {i.reports.length > 1 && <span className="ml-1 text-[11px] text-faint">merged</span>}
+                        {i.reports.length > 1 && <span className="ml-1 text-[11px] text-faint">linked</span>}
                       </td>
                       <td className="px-3 py-2.5 align-top">
                         <StatusChip status={i.status} />

@@ -7,24 +7,30 @@ import type {
   Incident,
   IncidentCategory,
   IncidentStatus,
+  PriorityBand,
   RawReport,
   SeverityBand,
 } from './types';
-import { EMPTY_HAZARDS } from './types';
+import { EMPTY_HAZARDS, effectivePriority } from './types';
 import { CATEGORY_LABELS, SLA_MINUTES, routeToDepartment } from './taxonomy';
-import { computePriority, buildDispatch } from './pipeline';
+import { computePriority, buildDispatch, CLOCK_STOPPED } from './pipeline';
 import { fetchTrafficSimulated, timeOfDay } from './context';
 
 /**
  * Controlled test scenarios.
  *
- * The project brief calls for "a small controlled set of test scenarios
- * created only for evaluating the system during development" — this is it.
- * These are not training data; they exist so the dashboard, the escalation
- * sweep and the verification loop are all demonstrable from a cold start.
+ * Stage 1 §2.2 allows for "a small controlled set of test scenarios created
+ * only for evaluating the system during development" — this is it. These are
+ * not training data; they exist so that every stage, including the ones that
+ * only trigger on failure, is demonstrable from a cold start.
  *
- * Note incident 1: three separate citizen reports of one crash, already merged
- * by the Combine stage. That is the duplicate-collapse behaviour, visible.
+ * The set is chosen to exercise the human-in-the-loop paths specifically:
+ *   0001  three reports of one crash, linked — and separable
+ *   0006  AI says resolved, but it is NOT closed until an official confirms
+ *   0007  closed, with the confirming official recorded
+ *   0009  closure rejected at verification, sent back and escalated
+ *   0010  low confidence, held for manual categorisation rather than guessed
+ *   0004  priority overridden by an official, with the recommendation kept
  */
 
 const ago = (min: number) => new Date(Date.now() - min * 60_000).toISOString();
@@ -88,7 +94,7 @@ function mkExtraction(p: {
     affectedScale: p.scale,
     observedObjects: p.objects,
     confidence: p.confidence,
-    needsHumanReview: p.confidence < 0.6,
+    needsHumanReview: p.confidence < 0.55,
     rationale: p.rationale,
     engine: 'mock',
     modelLatencyMs: 320 + (++exSeq * 271) % 1180,
@@ -108,6 +114,8 @@ function assemble(p: {
   assignee?: string;
   createdMinutesAgo: number;
   rainMm?: number;
+  needsManualCategorisation?: boolean;
+  priorityOverride?: { band: PriorityBand; by: string; reason: string };
 }): Incident {
   const createdAt = ago(p.createdMinutesAgo);
   const base = p.reports[0];
@@ -136,7 +144,8 @@ function assemble(p: {
       timeOfDay: timeOfDay(when),
       fetchedAt: createdAt,
     },
-    priority: { score: 0, band: 'P4', factors: [] },
+    recommendedPriority: { score: 0, band: 'P4', factors: [] },
+    needsManualCategorisation: p.needsManualCategorisation ?? false,
     department: routeToDepartment(p.category, []),
     recommendedActions: p.actions,
     status: p.status,
@@ -152,23 +161,44 @@ function assemble(p: {
         detail: `From report ${base.id} (${base.channel}).`,
       },
     ],
-    mergeLog: [],
+    linkLog: [],
   };
 
   const rain = (p.rainMm ?? 0) > 0.2;
   const heavy =
     incident.context.traffic?.congestionLevel === 'heavy' ||
     incident.context.traffic?.congestionLevel === 'gridlock';
-  incident.priority = computePriority(p.extractions, p.reports.length, { rain, heavyTraffic: heavy }, createdAt);
+  incident.recommendedPriority = computePriority(
+    p.extractions,
+    p.reports.length,
+    { rain, heavyTraffic: heavy },
+    createdAt,
+  );
+
+  if (p.priorityOverride) {
+    incident.priorityOverride = {
+      band: p.priorityOverride.band,
+      by: p.priorityOverride.by,
+      at: ago(Math.max(1, p.createdMinutesAgo - 15)),
+      reason: p.priorityOverride.reason,
+    };
+    incident.timeline.push({
+      at: incident.priorityOverride.at,
+      actor: p.priorityOverride.by,
+      event: 'Priority overridden',
+      detail: `Recommended ${incident.recommendedPriority.band}, set to ${p.priorityOverride.band}. Reason: ${p.priorityOverride.reason}`,
+    });
+  }
+
+  const band = effectivePriority(incident).band;
   incident.slaDueAt = new Date(
-    new Date(createdAt).getTime() + SLA_MINUTES[incident.priority.band] * 60_000,
+    new Date(createdAt).getTime() + SLA_MINUTES[band] * 60_000,
   ).toISOString();
   incident.slaBreached =
-    Date.now() > new Date(incident.slaDueAt).getTime() &&
-    !['verified_closed', 'resolved_pending_verification'].includes(p.status);
+    Date.now() > new Date(incident.slaDueAt).getTime() && !CLOCK_STOPPED.includes(p.status);
   incident.dispatch = buildDispatch(incident);
 
-  if (p.status !== 'new') {
+  if (p.status !== 'reported') {
     incident.timeline.push({
       at: ago(Math.max(1, p.createdMinutesAgo - 6)),
       actor: incident.department.name,
@@ -192,7 +222,7 @@ export function buildSeed(): Database {
   exSeq = 0;
   const incidents: Incident[] = [];
 
-  // ── 1. Road accident at Sion Circle — THREE reports collapsed into one ──────
+  // ── 1. Accident at Sion Circle — THREE reports LINKED (and separable) ───────
   const a1 = mkReport({
     channel: 'citizen_app', minutesAgo: 41, lat: 19.04012, lng: 72.86255,
     address: 'Sion Circle, Sion, Mumbai', reporter: 'R. Deshmukh', image: '/uploads/sample-accident.svg',
@@ -211,20 +241,20 @@ export function buildSeed(): Database {
     image: '/uploads/sample-accident-2.svg',
   });
   const e1 = mkExtraction({
-    report: a1, category: 'road_accident', subtype: 'Two-wheeler vs three-wheeler collision',
+    report: a1, category: 'accident', subtype: 'Two-wheeler vs three-wheeler collision',
     summary: 'Collision between a two-wheeler and an auto-rickshaw at Sion Circle; one rider is immobile on the carriageway and traffic is obstructed.',
     severity: 'critical', hazards: { injuriesLikely: true, blockingTraffic: true }, scale: 'street',
     objects: ['motorcycle on its side', 'auto-rickshaw', 'person lying on road', 'stopped vehicles'],
     confidence: 0.88, rationale: 'Image shows a person on the carriageway beside an overturned two-wheeler; text explicitly reports the rider is not getting up.',
   });
   const e2 = mkExtraction({
-    report: a2, category: 'road_accident', subtype: 'Collision with injury',
+    report: a2, category: 'accident', subtype: 'Collision with injury',
     summary: 'Caller reports a bike-auto collision at Sion Circle with one person bleeding from the leg.',
     severity: 'critical', hazards: { injuriesLikely: true, blockingTraffic: true }, scale: 'street',
     objects: [], confidence: 0.79, rationale: 'Voice transcript states visible bleeding; no image to corroborate, so confidence held below the image-backed report.',
   });
   const e3 = mkExtraction({
-    report: a3, category: 'road_accident', subtype: 'Traffic obstruction from collision',
+    report: a3, category: 'accident', subtype: 'Traffic obstruction from collision',
     summary: 'Social post reports a bike accident at Sion Circle causing a 20-minute standstill.',
     severity: 'high', hazards: { blockingTraffic: true }, scale: 'street',
     objects: ['queued traffic'], confidence: 0.72,
@@ -232,19 +262,19 @@ export function buildSeed(): Database {
   });
   const inc1 = assemble({
     id: 'INC-2026-0001', reports: [a1, a2, a3], extractions: [e1, e2, e3],
-    category: 'road_accident', subtype: 'Two-wheeler vs three-wheeler collision',
-    title: 'Road accident at Sion Circle',
-    summary: 'Three independent reports confirm a collision between a two-wheeler and an auto-rickshaw at Sion Circle. At least one rider is injured and immobile on the carriageway; the junction is fully obstructed with queues reported for 20 minutes. Corroboration across app, phone and social channels makes the injury report reliable.',
+    category: 'accident', subtype: 'Two-wheeler vs three-wheeler collision',
+    title: 'Accident at Sion Circle',
+    summary: 'Three independent reports describe a collision between a two-wheeler and an auto-rickshaw at Sion Circle. At least one rider is injured and immobile on the carriageway; the junction is fully obstructed with queues reported for 20 minutes. Corroboration across app, phone and social channels makes the injury report reliable.',
     actions: ['Dispatch ambulance via 108 to the north arm of the junction', 'Deploy traffic marshals to divert flow via Sion Hospital Road', 'Clear the carriageway once the casualty is moved', 'Record vehicle registration details for the accident register'],
     status: 'assigned', assignee: 'Traffic unit TRF-07 + EMS-114', createdMinutesAgo: 41,
   });
-  inc1.mergeLog = [
-    { at: ago(38), reportId: a2.id, confidence: 0.91, reason: 'Same junction (38 m apart), 3 minutes apart, both describe a two-wheeler collision with an injured rider. One event seen by two reporters.', engine: 'mock' },
-    { at: ago(33), reportId: a3.id, confidence: 0.84, reason: 'Within 45 m and 8 minutes of the existing incident; describes the same collision from the congestion side rather than the casualty side.', engine: 'mock' },
+  inc1.linkLog = [
+    { at: ago(38), action: 'linked', reportId: a2.id, confidence: 0.91, reason: 'Same junction (38 m apart), 3 minutes apart, both describe a two-wheeler collision with an injured rider. One event seen by two reporters.', engine: 'mock' },
+    { at: ago(33), action: 'linked', reportId: a3.id, confidence: 0.84, reason: 'Within 45 m and 8 minutes of the existing incident; describes the same collision from the congestion side rather than the casualty side.', engine: 'mock' },
   ];
   inc1.timeline.push(
-    { at: ago(38), actor: 'System', event: 'Corroborating report merged', detail: `Report ${a2.id} via phone_call. Evidence now 2 reports.` },
-    { at: ago(33), actor: 'System', event: 'Corroborating report merged', detail: `Report ${a3.id} via social_media. Evidence now 3 reports.` },
+    { at: ago(38), actor: 'System', event: 'Corroborating report linked', detail: `Report ${a2.id} via phone_call. Evidence now 2 reports.` },
+    { at: ago(33), actor: 'System', event: 'Corroborating report linked', detail: `Report ${a3.id} via social_media. Evidence now 3 reports.` },
   );
   incidents.push(inc1);
 
@@ -270,7 +300,7 @@ export function buildSeed(): Database {
     status: 'in_progress', assignee: 'Fire station Kurla — Tender FB-03', createdMinutesAgo: 22,
   }));
 
-  // ── 3. Flooding — Hindmata, overdue, will escalate ──────────────────────────
+  // ── 3. Flooding — Hindmata, overdue, escalation candidate ───────────────────
   const c1 = mkReport({
     channel: 'citizen_app', minutesAgo: 260, lat: 19.00742, lng: 72.84083,
     address: 'Hindmata Junction, Dadar East, Mumbai', reporter: 'S. Kulkarni', image: '/uploads/sample-flood.svg',
@@ -294,15 +324,19 @@ export function buildSeed(): Database {
     severity: 'high', hazards: { waterLogging: true, blockingTraffic: true }, scale: 'street',
     objects: [], confidence: 0.68, rationale: 'Text-only report; corroborates the first but adds no independent visual evidence.',
   });
-  incidents.push(assemble({
+  const inc3 = assemble({
     id: 'INC-2026-0003', reports: [c1, c2], extractions: [g1, g2], category: 'flooding',
     subtype: 'Street-level water-logging', title: 'Water-logging at Hindmata Junction',
     summary: 'Two reports confirm knee-deep water-logging across Hindmata Junction. Buses are immobilised, two-wheelers are stalling and water is entering ground-floor shops. Active rainfall means the level is likely still rising.',
     actions: ['Deploy dewatering pumps at the Hindmata low point', 'Clear storm-water drain inlets along the junction', 'Barricade the stretch and post diversion signage', 'Warn ground-floor shop occupants to lift stock'],
-    status: 'acknowledged', createdMinutesAgo: 260, rainMm: 4.6,
-  }));
+    status: 'verified', createdMinutesAgo: 260, rainMm: 4.6,
+  });
+  inc3.linkLog = [
+    { at: ago(240), action: 'linked', reportId: c2.id, confidence: 0.82, reason: 'Within 70 m and 20 minutes; both describe standing water deep enough to immobilise vehicles at the same junction.', engine: 'mock' },
+  ];
+  incidents.push(inc3);
 
-  // ── 4. Fallen tree — Chembur ────────────────────────────────────────────────
+  // ── 4. Fallen tree — Chembur, with an official PRIORITY OVERRIDE ────────────
   const d1 = mkReport({
     channel: 'field_officer', minutesAgo: 75, lat: 19.05223, lng: 72.90051,
     address: 'Central Avenue, Chembur, Mumbai', reporter: 'Ward officer M-East',
@@ -321,10 +355,14 @@ export function buildSeed(): Database {
     subtype: 'Fallen branch with cable entanglement', title: 'Fallen branch with live cable, Central Avenue Chembur',
     summary: 'A ward officer reports a large branch across the Central Avenue service road in Chembur with an electrical cable pulled down alongside it. Vehicle access is blocked. The cable must be isolated before any cutting work begins.',
     actions: ['Confirm with the electrical cell that the cable is de-energised before cutting', 'Dispatch a cutting crew with a chainsaw unit', 'Barricade both approaches to the service road', 'Remove debris and restore access'],
-    status: 'acknowledged', createdMinutesAgo: 75,
+    status: 'verified', createdMinutesAgo: 75,
+    priorityOverride: {
+      band: 'P1', by: 'Zonal Officer M-East',
+      reason: 'Service road is the access route for the ward fire station; a blocked approach is more serious than the score reflects.',
+    },
   }));
 
-  // ── 5. Water leak — Ghatkopar ───────────────────────────────────────────────
+  // ── 5. Water leakage — Ghatkopar ────────────────────────────────────────────
   const i1 = mkReport({
     channel: 'citizen_app', minutesAgo: 540, lat: 19.08604, lng: 72.90812,
     address: 'Jawahar Road, Ghatkopar East, Mumbai', reporter: 'P. Shetty',
@@ -342,11 +380,11 @@ export function buildSeed(): Database {
     id: 'INC-2026-0005', reports: [i1], extractions: [j1], category: 'water_leak',
     subtype: 'Pipeline leak with road scour', title: 'Pipeline leak on Jawahar Road, Ghatkopar East',
     summary: 'A resident reports continuous pressurised water discharge from beneath Jawahar Road since the morning, with visible scouring of the surface. Ongoing loss and progressive road damage if not isolated.',
-    actions: ['Isolate the affected valve section', 'Dispatch a leak-repair gang with excavation support', 'Notify residents of the supply interruption window', 'Raise a follow-on ticket with Roads & Bridges for resurfacing'],
+    actions: ['Isolate the affected valve section', 'Dispatch a leak-repair gang with excavation support', 'Notify residents of the supply interruption window', 'Raise a follow-on ticket with Roads / Public Works for resurfacing'],
     status: 'assigned', assignee: 'Leak gang HYD-12', createdMinutesAgo: 540,
   }));
 
-  // ── 6. Pothole — awaiting verification ──────────────────────────────────────
+  // ── 6. Pothole — AI says resolved, but NOT closed (awaits an official) ──────
   const k1 = mkReport({
     channel: 'citizen_app', minutesAgo: 2600, lat: 19.04805, lng: 72.92803,
     address: 'Sion–Panvel Highway, Mankhurd, Mumbai', reporter: 'A. Qureshi', image: '/uploads/sample-pothole.svg',
@@ -364,15 +402,20 @@ export function buildSeed(): Database {
     subtype: 'Deep pothole in running lane', title: 'Deep pothole, Sion–Panvel Highway at Mankhurd',
     summary: 'A deep pothole in the left running lane of the Sion–Panvel Highway at Mankhurd is forcing two-wheelers into the adjacent lane. Hazard increases after dark and in rain when the cavity fills.',
     actions: ['Schedule a cold-mix patching crew', 'Place a hazard marker and cone the lane until repair', 'Log the stretch for the next resurfacing cycle'],
-    status: 'resolved_pending_verification', assignee: 'Patching crew RNB-04', createdMinutesAgo: 2600,
+    status: 'resolved', assignee: 'Patching crew RNB-04', createdMinutesAgo: 2600,
   });
-  inc6.timeline.push({
-    at: ago(90), actor: 'Patching crew RNB-04', event: 'Marked resolved by crew',
-    detail: 'Cold-mix patch applied. Awaiting photographic verification.',
-  });
+  inc6.verification = {
+    at: ago(80), verdict: 'resolved', confidence: 0.84,
+    rationale: 'The after-photograph shows the same stretch of lane with a uniform patched surface and no visible cavity. The reported pothole does not appear to be present.',
+    afterImagePath: '/uploads/sample-garbage-after.svg', engine: 'mock',
+  };
+  inc6.timeline.push(
+    { at: ago(90), actor: 'Patching crew RNB-04', event: 'Marked resolved by crew', detail: 'Cold-mix patch applied. Post-action photograph submitted.' },
+    { at: ago(80), actor: 'System', event: 'Verification suggests resolved', detail: 'Advisory only — this incident stays open until an authorised official confirms closure.' },
+  );
   incidents.push(inc6);
 
-  // ── 7. Garbage — verified and closed ────────────────────────────────────────
+  // ── 7. Garbage — closed, WITH the confirming official recorded ──────────────
   const m1 = mkReport({
     channel: 'citizen_app', minutesAgo: 4300, lat: 19.05501, lng: 72.91802,
     address: 'Shivaji Nagar, Govandi, Mumbai', reporter: 'N. Ansari', image: '/uploads/sample-garbage.svg',
@@ -388,22 +431,27 @@ export function buildSeed(): Database {
   const inc7 = assemble({
     id: 'INC-2026-0007', reports: [m1], extractions: [n1], category: 'garbage',
     subtype: 'Uncollected accumulation at a collection point', title: 'Uncollected waste at Shivaji Nagar, Govandi',
-    summary: 'Waste has accumulated beyond bin capacity at a Shivaji Nagar collection point over four days and is being spread across the carriageway by animals. Reported as a recurring location.',
+    summary: 'Waste accumulated beyond bin capacity at a Shivaji Nagar collection point over four days and was being spread across the carriageway by animals. Reported as a recurring location.',
     actions: ['Assign the ward collection vehicle on the next round', 'Issue a notice if this is a repeat dumping point', 'Sanitise the spot after clearance'],
-    status: 'verified_closed', assignee: 'SWM vehicle M-E/14', createdMinutesAgo: 4300,
+    status: 'closed', assignee: 'SWM vehicle M-E/14', createdMinutesAgo: 4300,
   });
   inc7.verification = {
     at: ago(1200), verdict: 'resolved', confidence: 0.88,
     rationale: 'After-photograph shows the same corner with the bin upright and in place, no refuse bags on the ground and a clear carriageway. The specific accumulation described in the complaint is no longer present.',
     afterImagePath: '/uploads/sample-garbage-after.svg', engine: 'mock',
   };
+  inc7.closure = {
+    by: 'Ward Officer M-East', at: ago(1150),
+    note: 'Inspected the submitted evidence and the location register. Satisfied the point was cleared and sanitised.',
+  };
   inc7.timeline.push(
     { at: ago(1260), actor: 'SWM vehicle M-E/14', event: 'Marked resolved by crew', detail: 'Point cleared and sanitised.' },
-    { at: ago(1200), actor: 'System', event: 'Resolution verified', detail: 'After-evidence accepted at 0.88 confidence. Incident closed.' },
+    { at: ago(1200), actor: 'System', event: 'Verification suggests resolved', detail: 'Advisory at 0.88 confidence. Awaiting official confirmation.' },
+    { at: ago(1150), actor: 'Ward Officer M-East', event: 'Closure confirmed by official', detail: 'Incident closed.' },
   );
   incidents.push(inc7);
 
-  // ── 8. Streetlight — new, low priority ──────────────────────────────────────
+  // ── 8. Streetlight — newly reported ─────────────────────────────────────────
   const o1 = mkReport({
     channel: 'sms', minutesAgo: 150, lat: 19.04851, lng: 72.89903,
     address: 'Chembur Camp Road, Chembur, Mumbai',
@@ -421,39 +469,64 @@ export function buildSeed(): Database {
     subtype: 'Multiple lamp failure on one circuit', title: 'Unlit stretch at Chembur Camp Road bus stop',
     summary: 'An SMS report describes three consecutive street lights out near the Chembur Camp Road bus stop. The consecutive pattern points to a circuit or feeder-pillar fault rather than individual lamp failures.',
     actions: ['Raise a maintenance ticket against the feeder pillar', 'Check whether the whole circuit is affected before replacing lamps'],
-    status: 'new', createdMinutesAgo: 150,
+    status: 'reported', createdMinutesAgo: 150,
   }));
 
-  // ── 9. Sewage — reopened after a rejected closure ───────────────────────────
+  // ── 9. Road damage — closure REJECTED at verification, sent back ────────────
   const q1 = mkReport({
     channel: 'citizen_app', minutesAgo: 3000, lat: 19.04702, lng: 72.93301,
     address: 'Mankhurd Link Road, Mankhurd, Mumbai', reporter: 'F. Khan', image: '/uploads/sample-sewage.svg',
-    text: 'Manhole overflowing onto the footpath, children walk through this to school every morning.',
+    text: 'The road has caved in near the footpath, big crack across half the lane, children walk through this to school every morning.',
   });
   const r1 = mkExtraction({
-    report: q1, category: 'sewage', subtype: 'Manhole overflow onto pedestrian route',
-    summary: 'A manhole on Mankhurd Link Road is overflowing across the footpath used as a school route.',
-    severity: 'high', hazards: { waterLogging: true }, scale: 'street',
-    objects: ['overflowing manhole', 'effluent across footpath', 'pedestrian route'],
-    confidence: 0.85, rationale: 'Image shows discharge from the manhole cover spreading across the full footpath width.',
+    report: q1, category: 'road_damage', subtype: 'Subsidence across a running lane',
+    summary: 'The carriageway on Mankhurd Link Road has subsided beside the footpath, with a crack extending across half a lane on a school walking route.',
+    severity: 'high', hazards: { blockingTraffic: true }, scale: 'street',
+    objects: ['subsided road surface', 'crack across lane', 'adjacent footpath'],
+    confidence: 0.85, rationale: 'Image shows a depression with an open crack running across the lane, distinct from a surface pothole.',
   });
   const inc9 = assemble({
-    id: 'INC-2026-0009', reports: [q1], extractions: [r1], category: 'sewage',
-    subtype: 'Manhole overflow onto pedestrian route', title: 'Manhole overflow on Mankhurd Link Road',
-    summary: 'A manhole on Mankhurd Link Road is discharging across the footpath used by children walking to school. A first closure was rejected at verification because the overflow was still visible in the after-evidence.',
-    actions: ['Dispatch a jetting and suction unit', 'Check for a downstream blockage before re-closing', 'Disinfect the footpath after clearance', 'Re-verify with a photograph taken from the original angle'],
-    status: 'reopened', assignee: 'Jetting unit SEW-09', createdMinutesAgo: 3000,
+    id: 'INC-2026-0009', reports: [q1], extractions: [r1], category: 'road_damage',
+    subtype: 'Subsidence across a running lane', title: 'Road subsidence on Mankhurd Link Road',
+    summary: 'The carriageway on Mankhurd Link Road has subsided beside the footpath used by children walking to school. A first closure was rejected at verification because the after-photograph did not show the reported location.',
+    actions: ['Inspect the extent of the subsidence before scheduling works', 'Barricade the affected lane', 'Schedule resurfacing and log the stretch', 'Re-verify with a photograph taken from the original angle'],
+    status: 'in_progress', assignee: 'Works gang RNB-09', createdMinutesAgo: 3000,
   });
   inc9.verification = {
     at: ago(400), verdict: 'unresolved', confidence: 0.76,
-    rationale: 'The after-photograph is taken from a different angle and shows a dry section of footpath, but the manhole itself is out of frame. The specific overflow described in the complaint cannot be confirmed as cleared.',
+    rationale: 'The after-photograph is taken from a different angle and shows an intact stretch of carriageway, but the subsided section described in the complaint is out of frame. The repair cannot be confirmed.',
     afterImagePath: '/uploads/sample-sewage-after.svg', engine: 'mock',
   };
+  inc9.escalations = [
+    { at: ago(395), level: 2, reason: 'Closure rejected at verification — the reported problem is still visible in the after-evidence.', notified: 'Zonal Officer' },
+  ];
   inc9.timeline.push(
-    { at: ago(430), actor: 'Jetting unit SEW-09', event: 'Marked resolved by crew', detail: 'Reported cleared.' },
-    { at: ago(400), actor: 'System', event: 'Closure rejected at verification', detail: 'After-evidence does not show the reported manhole. Incident reopened.' },
+    { at: ago(430), actor: 'Works gang RNB-09', event: 'Marked resolved by crew', detail: 'Reported repaired.' },
+    { at: ago(400), actor: 'System', event: 'Closure rejected at verification', detail: 'After-evidence does not show the reported location. Returned to in progress.' },
+    { at: ago(395), actor: 'System', event: 'Escalated to level 2', detail: 'Notified: Zonal Officer.' },
   );
   incidents.push(inc9);
+
+  // ── 10. Low confidence — held for MANUAL CATEGORISATION, not guessed ────────
+  const s1 = mkReport({
+    channel: 'sms', minutesAgo: 95, lat: 19.06241, lng: 72.89881,
+    address: 'Chembur Station Road, Chembur, Mumbai',
+    text: 'Something is very wrong near the station gate, please send someone to check it urgently.',
+  });
+  const t1 = mkExtraction({
+    report: s1, category: 'other', subtype: 'Unclassified report',
+    summary: 'A report near Chembur Station gate states that something is wrong and requests urgent inspection, without describing the problem.',
+    severity: 'medium', hazards: {}, scale: 'individual',
+    objects: [], confidence: 0.31,
+    rationale: 'The report names no observable problem and supplies no photograph. There is not enough evidence to assign a category, so none has been assigned.',
+  });
+  incidents.push(assemble({
+    id: 'INC-2026-0010', reports: [s1], extractions: [t1], category: 'other',
+    subtype: 'Unclassified report', title: 'Unspecified complaint near Chembur Station gate',
+    summary: 'An SMS near Chembur Station gate asks for urgent inspection but does not say what the problem is, and no photograph was supplied. The system has deliberately not assigned a category.',
+    actions: ['Assign a ward officer to inspect and reclassify', 'Contact the reporter for further detail'],
+    status: 'reported', createdMinutesAgo: 95, needsManualCategorisation: true,
+  }));
 
   return { incidents, counter: incidents.length };
 }

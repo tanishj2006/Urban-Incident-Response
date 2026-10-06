@@ -19,13 +19,12 @@ export function PriorityChip({ band, withLabel = true }: { band: PriorityBand; w
 }
 
 const STATUS_STYLE: Record<string, string> = {
-  new: 'bg-accent-soft text-accent',
-  acknowledged: 'bg-sunken text-ink-2',
+  reported: 'bg-accent-soft text-accent',
+  verified: 'bg-sunken text-ink-2',
   assigned: 'bg-sunken text-ink-2',
   in_progress: 'bg-p2-soft text-p2',
-  resolved_pending_verification: 'bg-p3-soft text-p3',
-  verified_closed: 'bg-ok-soft text-ok',
-  reopened: 'bg-p1-soft text-p1',
+  resolved: 'bg-p3-soft text-p3',
+  closed: 'bg-ok-soft text-ok',
   escalated: 'bg-p1-soft text-p1',
 };
 

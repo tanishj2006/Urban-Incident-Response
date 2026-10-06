@@ -12,16 +12,15 @@ import { CATEGORY_LABELS } from './taxonomy';
  */
 
 const CATEGORY_KEYWORDS: Record<IncidentCategory, string[]> = {
-  road_accident: ['accident', 'crash', 'collision', 'collided', 'hit', 'overturn', 'bike fell', 'rammed', 'injured'],
+  accident: ['accident', 'crash', 'collision', 'collided', 'overturn', 'bike fell', 'rammed', 'knocked down'],
   fire: ['fire', 'burning', 'smoke', 'flames', 'blaze', 'short circuit', 'ablaze'],
-  flooding: ['flood', 'waterlogging', 'water logging', 'knee deep', 'submerged', 'inundated', 'water filled'],
-  pothole: ['pothole', 'crater', 'road damage', 'broken road', 'cracked road', 'gaddha'],
-  garbage: ['garbage', 'trash', 'rubbish', 'dump', 'waste', 'litter', 'kachra', 'stinking'],
-  water_leak: ['leak', 'pipeline burst', 'water pipe', 'gushing', 'burst pipe', 'seepage'],
+  flooding: ['flood', 'waterlogging', 'water logging', 'knee deep', 'submerged', 'inundated', 'water filled', 'standing water'],
+  garbage: ['garbage', 'trash', 'rubbish', 'dump', 'waste', 'litter', 'kachra', 'stinking', 'bin'],
+  pothole: ['pothole', 'crater', 'gaddha', 'hole in the road', 'cavity'],
   fallen_tree: ['tree', 'branch', 'uprooted', 'fallen tree'],
+  water_leak: ['leak', 'pipeline burst', 'water pipe', 'gushing', 'burst pipe', 'seepage'],
+  road_damage: ['road damage', 'broken road', 'cracked road', 'subsided', 'caved in', 'uneven road'],
   streetlight: ['streetlight', 'street light', 'lamp post', 'dark road', 'light not working'],
-  sewage: ['sewage', 'drain', 'manhole', 'gutter', 'overflow', 'sewer'],
-  building_collapse: ['collapse', 'building fell', 'slab', 'wall fell', 'structure'],
   other: [],
 };
 
@@ -42,30 +41,28 @@ const HAZARD_KEYWORDS: Record<keyof HazardFlags, string[]> = {
 };
 
 const DEFAULT_SEVERITY: Record<IncidentCategory, SeverityBand> = {
-  road_accident: 'high',
+  accident: 'high',
   fire: 'critical',
   flooding: 'high',
-  pothole: 'medium',
   garbage: 'low',
-  water_leak: 'medium',
+  pothole: 'medium',
   fallen_tree: 'high',
+  water_leak: 'medium',
+  road_damage: 'medium',
   streetlight: 'low',
-  sewage: 'medium',
-  building_collapse: 'critical',
   other: 'medium',
 };
 
 const DEFAULT_SCALE: Record<IncidentCategory, AffectedScale> = {
-  road_accident: 'street',
+  accident: 'street',
   fire: 'neighbourhood',
   flooding: 'neighbourhood',
-  pothole: 'street',
   garbage: 'street',
-  water_leak: 'street',
+  pothole: 'street',
   fallen_tree: 'street',
+  water_leak: 'street',
+  road_damage: 'street',
   streetlight: 'individual',
-  sewage: 'street',
-  building_collapse: 'neighbourhood',
   other: 'individual',
 };
 
@@ -118,8 +115,7 @@ export function mockExtract(input: {
   }
   if (category === 'fire') hazards.fireOrSmoke = true;
   if (category === 'flooding') hazards.waterLogging = true;
-  if (category === 'building_collapse') hazards.structuralRisk = true;
-  if (category === 'road_accident') hazards.blockingTraffic = true;
+  if (category === 'accident') hazards.blockingTraffic = true;
 
   // Confidence reflects evidence quality, not keyword count.
   let confidence = 0.42;
@@ -186,16 +182,15 @@ export function mockFuse(input: {
   const where = input.address ?? 'the reported location';
 
   const PLAYBOOK: Record<IncidentCategory, string[]> = {
-    road_accident: ['Dispatch traffic marshals to divert flow around the site', 'Request ambulance standby via 108', 'Clear the carriageway once casualties are moved', 'Record vehicle details for the accident register'],
+    accident: ['Dispatch traffic marshals to divert flow around the site', 'Request ambulance standby via 108', 'Clear the carriageway once casualties are moved', 'Record vehicle details for the accident register'],
     fire: ['Dispatch nearest fire tender immediately', 'Cut electrical supply to the affected block', 'Establish a 50 m cordon and evacuate adjacent structures', 'Keep an ambulance on standby'],
     flooding: ['Deploy dewatering pumps to the low point', 'Clear the nearest storm-water drain inlets', 'Barricade the stretch and post diversion signage', 'Warn residents of ground-floor units'],
-    pothole: ['Schedule a cold-mix patching crew', 'Place a hazard marker until repair', 'Log the stretch for the next resurfacing cycle'],
     garbage: ['Assign the ward collection vehicle on the next round', 'Issue a notice if this is a repeat dumping point', 'Sanitise the spot after clearance'],
-    water_leak: ['Isolate the affected valve section', 'Dispatch a leak-repair gang', 'Notify residents of the supply interruption window'],
+    pothole: ['Schedule a cold-mix patching crew', 'Place a hazard marker until repair', 'Log the stretch for the next resurfacing cycle'],
     fallen_tree: ['Dispatch a cutting crew with a chainsaw unit', 'Check for entangled electrical cables before cutting', 'Clear the carriageway and remove debris'],
+    water_leak: ['Isolate the affected valve section', 'Dispatch a leak-repair gang', 'Notify residents of the supply interruption window'],
+    road_damage: ['Inspect the extent of the subsidence before scheduling works', 'Barricade the affected lane', 'Schedule resurfacing and log the stretch'],
     streetlight: ['Raise a maintenance ticket for the feeder pillar', 'Check whether the whole circuit is affected'],
-    sewage: ['Dispatch a jetting/suction unit', 'Check for a downstream blockage', 'Disinfect the overflow area'],
-    building_collapse: ['Dispatch the disaster response team immediately', 'Evacuate and cordon adjoining structures', 'Request search-and-rescue with the fire brigade', 'Set up a casualty collection point'],
     other: ['Assign a ward officer to inspect and reclassify', 'Contact the reporter for further detail'],
   };
 

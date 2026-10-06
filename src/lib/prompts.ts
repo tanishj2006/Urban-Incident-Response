@@ -1,4 +1,4 @@
-import { ALL_CATEGORIES } from './taxonomy';
+import { ALL_CATEGORIES, CATEGORY_DESCRIPTIONS, CATEGORY_LABELS } from './taxonomy';
 
 /**
  * The prompt library.
@@ -57,10 +57,17 @@ export const EXTRACTION_PROMPT: PromptSpec = {
     'The model is told to rely only on what is visible or stated. Without this, it reliably invents casualty counts for any accident photo.',
     'A needsHumanReview flag is demanded whenever evidence is thin — this is the escape hatch that keeps a low-confidence guess from silently becoming a P1 dispatch.',
     'confidence is defined explicitly in the prompt, otherwise every report comes back as 0.9.',
+    'The category list is given with a one-line definition of each, not just the label. "Pothole" and "Road damage" are otherwise routinely confused, and they route to the same department but carry different repair work.',
+    'The model is told it may answer "other" rather than force a fit, because a wrongly confident category produces a wrongly routed dispatch.',
   ],
   system: [
     'You are an intake analyst for a municipal emergency coordination centre.',
     'You convert messy citizen reports into structured incident records.',
+    '',
+    'The category must be exactly one of these:',
+    ...ALL_CATEGORIES.map((c) => `  - ${c}: ${CATEGORY_LABELS[c]} — ${CATEGORY_DESCRIPTIONS[c]}`),
+    'If the report does not clearly fit one of the first nine, answer "other". Do not force a fit.',
+    '',
     'Rules you must follow:',
     '1. Describe ONLY what is visible in the image or stated in the text/transcript. Never infer casualty counts, causes, or damage you cannot see.',
     '2. If the evidence is ambiguous or thin, say so by setting needsHumanReview to true and lowering confidence.',

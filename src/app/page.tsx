@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import { listIncidents } from '@/lib/store';
+import { effectivePriority } from '@/lib/types';
 import { CATEGORY_LABELS } from '@/lib/taxonomy';
 import PipelineDiagram from '@/components/PipelineDiagram';
 import { Metric, Panel, PriorityChip, StatusChip, timeAgo } from '@/components/ui';
@@ -9,17 +10,19 @@ export const dynamic = 'force-dynamic';
 export default async function OverviewPage() {
   const incidents = await listIncidents();
 
-  const open = incidents.filter((i) => i.status !== 'verified_closed');
-  const p1 = open.filter((i) => i.priority.band === 'P1');
+  const open = incidents.filter((i) => i.status !== 'closed');
+  const p1 = open.filter((i) => effectivePriority(i).band === 'P1');
   const breached = open.filter((i) => i.slaBreached);
-  const closed = incidents.filter((i) => i.status === 'verified_closed');
+  const closed = incidents.filter((i) => i.status === 'closed');
   const totalReports = incidents.reduce((n, i) => n + i.reports.length, 0);
   const collapsed = totalReports - incidents.length;
   const rejected = incidents.filter((i) => i.verification && i.verification.verdict !== 'resolved');
+  const awaitingConfirmation = incidents.filter((i) => i.status === 'resolved');
+  const triage = incidents.filter((i) => i.needsManualCategorisation);
 
   const byBand = (['P1', 'P2', 'P3', 'P4'] as const).map((b) => ({
     band: b,
-    count: open.filter((i) => i.priority.band === b).length,
+    count: open.filter((i) => effectivePriority(i).band === b).length,
   }));
   const maxBand = Math.max(1, ...byBand.map((b) => b.count));
 
@@ -47,8 +50,8 @@ export default async function OverviewPage() {
           label="Past response target"
           tone={breached.length ? 'text-p2' : undefined}
         />
-        <Metric value={collapsed} label="Duplicate reports collapsed" />
-        <Metric value={closed.length} label="Verified & closed" tone="text-ok" />
+        <Metric value={collapsed} label="Duplicate reports linked" />
+        <Metric value={closed.length} label="Closed by an official" tone="text-ok" />
       </section>
 
       <div className="grid gap-5 lg:grid-cols-[1.45fr_1fr]">
@@ -61,9 +64,12 @@ export default async function OverviewPage() {
                     <div className="min-w-0">
                       <div className="flex items-center gap-2">
                         <span className="mono text-faint">{inc.id}</span>
-                        <PriorityChip band={inc.priority.band} withLabel={false} />
+                        <PriorityChip band={effectivePriority(inc).band} withLabel={false} />
                         {inc.reports.length > 1 && (
-                          <span className="chip bg-sunken text-muted">{inc.reports.length} reports</span>
+                          <span className="chip bg-sunken text-muted">{inc.reports.length} linked</span>
+                        )}
+                        {inc.needsManualCategorisation && (
+                          <span className="chip bg-p2-soft text-p2">needs categorising</span>
                         )}
                       </div>
                       <div className="mt-1 truncate text-[14px] font-medium text-ink">{inc.title}</div>
@@ -115,21 +121,31 @@ export default async function OverviewPage() {
             </div>
           </Panel>
 
-          <Panel title="Verification loop">
+          <Panel title="Where humans decide">
             <dl className="space-y-2 text-[13.5px]">
               <div className="flex justify-between gap-3">
-                <dt className="text-muted">Closures submitted</dt>
-                <dd className="tnum text-ink-2">{incidents.filter((i) => i.verification).length}</dd>
+                <dt className="text-muted">Held for manual categorising</dt>
+                <dd className={`tnum ${triage.length ? 'text-p2' : 'text-ink-2'}`}>{triage.length}</dd>
               </div>
               <div className="flex justify-between gap-3">
-                <dt className="text-muted">Rejected or partial</dt>
+                <dt className="text-muted">Awaiting closure confirmation</dt>
+                <dd className={`tnum ${awaitingConfirmation.length ? 'text-p3' : 'text-ink-2'}`}>
+                  {awaitingConfirmation.length}
+                </dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted">Closures rejected or partial</dt>
                 <dd className="tnum text-p1">{rejected.length}</dd>
+              </div>
+              <div className="flex justify-between gap-3">
+                <dt className="text-muted">Priorities overridden</dt>
+                <dd className="tnum text-ink-2">{incidents.filter((i) => i.priorityOverride).length}</dd>
               </div>
             </dl>
             <p className="mt-3 border-t border-line pt-3 text-[12.5px] leading-snug text-muted">
-              A crew marking work done is a claim. The verification stage re-reads the after-photograph
-              against the original complaint, and an unresolved verdict reopens the incident instead of
-              closing it.
+              The system classifies, links, scores and flags. An official verifies, assigns, overrides and
+              closes. Nothing here reaches <strong className="font-medium text-ink-2">Closed</strong> without
+              a named person confirming it.
             </p>
           </Panel>
         </div>

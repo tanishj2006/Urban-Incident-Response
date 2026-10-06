@@ -71,35 +71,45 @@ export default function OpsConsole({ incidents }: { incidents: Incident[] }) {
     <div className="space-y-4">
       <div className="flex flex-wrap items-end justify-between gap-3">
         <div>
-          <h1 className="text-[22px] font-semibold tracking-tight">Operations console</h1>
-          <p className="mt-1 text-[14px] text-muted">
-            {rows.length} of {incidents.length} incidents shown.
+          <h1 className="text-[28px] leading-tight font-bold tracking-tight">Incidents</h1>
+          <p className="mt-1.5 max-w-[60ch] text-[15.5px] text-ink-2">
+            Every reported problem, most urgent first. Select one to see the full case and take action.
+            Showing {rows.length} of {incidents.length}.
           </p>
         </div>
         <div className="flex flex-wrap gap-2">
           <button className="btn" onClick={() => run('escalate')} disabled={busy !== null}>
-            {busy === 'escalate' ? 'Sweeping…' : 'Run escalation sweep'}
+            {busy === 'escalate' ? 'Checking…' : 'Escalate late incidents'}
           </button>
           <button className="btn" onClick={() => run('seed')} disabled={busy !== null}>
-            {busy === 'seed' ? 'Restoring…' : 'Restore test scenarios'}
+            {busy === 'seed' ? 'Resetting…' : 'Reset demo data'}
           </button>
           <Link className="btn btn-primary" href="/report">
-            New report
+            Report an issue
           </Link>
         </div>
       </div>
 
       {notice && (
-        <div className="panel bg-accent-soft px-4 py-2.5 text-[13.5px] text-accent-ink">{notice}</div>
+        <div className="panel bg-accent-soft px-4 py-3 text-[14.5px] font-medium text-accent-ink">{notice}</div>
       )}
 
-      <div className="panel flex flex-wrap items-center gap-2 px-3 py-2.5">
+      <div className="flex flex-wrap items-center gap-x-4 gap-y-1.5 px-1 text-[13.5px] text-muted">
+        <span className="font-semibold text-ink-2">How urgent:</span>
+        <PriorityChip band="P1" withLabel={false} />
+        <PriorityChip band="P2" withLabel={false} />
+        <PriorityChip band="P3" withLabel={false} />
+        <PriorityChip band="P4" withLabel={false} />
+        <span>Urgent cases are shown first.</span>
+      </div>
+
+      <div className="panel flex flex-wrap items-center gap-2.5 px-3.5 py-3">
         <Seg
           value={scope}
           onChange={(v) => setScope(v as Scope)}
           options={[
             ['open', 'Open'],
-            ['triage', `Needs categorising${triageCount ? ` (${triageCount})` : ''}`],
+            ['triage', `Needs a category${triageCount ? ` (${triageCount})` : ''}`],
             ['closed', 'Closed'],
             ['all', 'All'],
           ]}
@@ -108,15 +118,15 @@ export default function OpsConsole({ incidents }: { incidents: Incident[] }) {
           value={band}
           onChange={(v) => setBand(v as PriorityBand | 'all')}
           options={[
-            ['all', 'All priorities'],
-            ['P1', 'P1'],
-            ['P2', 'P2'],
-            ['P3', 'P3'],
-            ['P4', 'P4'],
+            ['all', 'Any urgency'],
+            ['P1', 'Urgent'],
+            ['P2', 'High'],
+            ['P3', 'Medium'],
+            ['P4', 'Low'],
           ]}
         />
-        <select className="field w-auto py-1.5 text-[13px]" value={dept} onChange={(e) => setDept(e.target.value)}>
-          <option value="all">All departments</option>
+        <select className="field w-auto py-2 text-[14px]" value={dept} onChange={(e) => setDept(e.target.value)}>
+          <option value="all">Any department</option>
           {departments.map((d) => (
             <option key={d} value={d}>
               {d}
@@ -124,8 +134,8 @@ export default function OpsConsole({ incidents }: { incidents: Incident[] }) {
           ))}
         </select>
         <input
-          className="field w-auto min-w-[200px] flex-1 py-1.5 text-[13px]"
-          placeholder="Search id, title or location…"
+          className="field w-auto min-w-[200px] flex-1 py-2 text-[14px]"
+          placeholder="Search by title, place or ID…"
           value={q}
           onChange={(e) => setQ(e.target.value)}
         />
@@ -133,7 +143,7 @@ export default function OpsConsole({ incidents }: { incidents: Incident[] }) {
           value={view}
           onChange={(v) => setView(v as View)}
           options={[
-            ['table', 'Table'],
+            ['table', 'List'],
             ['map', 'Map'],
           ]}
         />
@@ -153,17 +163,17 @@ export default function OpsConsole({ incidents }: { incidents: Incident[] }) {
       ) : (
         <div className="panel overflow-hidden">
           <div className="overflow-x-auto">
-            <table className="w-full border-collapse text-[13.5px]">
+            <table className="w-full border-collapse text-[14.5px]">
               <thead>
-                <tr className="border-b border-line bg-sunken text-left">
+                <tr className="border-b border-line bg-accent-soft/60 text-left">
                   <Th>Incident</Th>
-                  <Th>Priority</Th>
-                  <Th>Category</Th>
+                  <Th>Urgency</Th>
+                  <Th>Type</Th>
                   <Th>Department</Th>
-                  <Th className="text-right">Evidence</Th>
-                  <Th>Status</Th>
-                  <Th>Response target</Th>
-                  <Th className="text-right">Age</Th>
+                  <Th className="text-right">Reports</Th>
+                  <Th>Stage</Th>
+                  <Th>Time to respond</Th>
+                  <Th className="text-right">Reported</Th>
                 </tr>
               </thead>
               <tbody>
@@ -174,40 +184,40 @@ export default function OpsConsole({ incidents }: { incidents: Incident[] }) {
                   // from there the verification stage owns the incident.
                   const clockStopped = i.status === 'closed' || i.status === 'resolved';
                   return (
-                    <tr key={i.id} className="border-b border-line last:border-0 hover:bg-sunken">
-                      <td className="px-3 py-2.5 align-top">
+                    <tr key={i.id} className="border-b border-line last:border-0 transition-colors hover:bg-accent-soft/40">
+                      <td className="px-3 py-3 align-top">
                         <Link href={`/incidents/${i.id}`} className="block max-w-[320px]">
                           <span className="mono block text-faint">{i.id}</span>
-                          <span className="mt-0.5 block font-medium text-ink hover:text-accent">{i.title}</span>
+                          <span className="mt-0.5 block font-semibold text-ink hover:text-accent">{i.title}</span>
                         </Link>
                       </td>
                       <td className="px-3 py-2.5 align-top">
                         <PriorityChip band={pr.band} withLabel={false} />
-                        <span className="tnum mt-1 block text-[11.5px] text-faint">
+                        <span className="tnum mt-1 block text-[12.5px] text-faint">
                           {i.priorityOverride
-                            ? `set · rec. ${i.recommendedPriority.band}`
-                            : `${i.recommendedPriority.score}/100`}
+                            ? `changed by official (AI said ${i.recommendedPriority.band})`
+                            : `score ${i.recommendedPriority.score}/100`}
                         </span>
                       </td>
                       <td className="px-3 py-2.5 align-top text-muted">
                         {CATEGORY_LABELS[i.category]}
                         {i.needsManualCategorisation && (
-                          <span className="chip mt-1 block w-fit bg-p2-soft text-p2">needs categorising</span>
+                          <span className="chip mt-1 block w-fit bg-p2-soft text-p2">Needs a category</span>
                         )}
                       </td>
                       <td className="px-3 py-2.5 align-top text-muted">{i.department.name}</td>
                       <td className="tnum px-3 py-2.5 text-right align-top text-ink-2">
                         {i.reports.length}
-                        {i.reports.length > 1 && <span className="ml-1 text-[11px] text-faint">linked</span>}
+                        {i.reports.length > 1 && <span className="ml-1 text-[12px] text-violet">linked</span>}
                       </td>
                       <td className="px-3 py-2.5 align-top">
                         <StatusChip status={i.status} />
                       </td>
                       <td className="px-3 py-2.5 align-top">
                         {clockStopped ? (
-                          <span className="text-faint">—</span>
+                          <span className="text-faint">Done</span>
                         ) : (
-                          <span className={sla.overdue ? 'font-medium text-p1' : 'text-muted'}>{sla.text}</span>
+                          <span className={sla.overdue ? 'font-semibold text-p1' : 'text-ink-2'}>{sla.text}</span>
                         )}
                       </td>
                       <td className="px-3 py-2.5 text-right align-top whitespace-nowrap text-faint">
@@ -219,7 +229,7 @@ export default function OpsConsole({ incidents }: { incidents: Incident[] }) {
                 {rows.length === 0 && (
                   <tr>
                     <td colSpan={8} className="px-3 py-10 text-center text-faint">
-                      No incidents match these filters.
+                      Nothing matches these filters. Try "Any urgency" or "All".
                     </td>
                   </tr>
                 )}
@@ -233,7 +243,7 @@ export default function OpsConsole({ incidents }: { incidents: Incident[] }) {
 }
 
 function Th({ children, className = '' }: { children: React.ReactNode; className?: string }) {
-  return <th className={`label px-3 py-2 font-semibold ${className}`}>{children}</th>;
+  return <th className={`px-3 py-3 text-[13px] font-semibold text-ink-2 ${className}`}>{children}</th>;
 }
 
 function Seg({
@@ -246,14 +256,14 @@ function Seg({
   options: [string, string][];
 }) {
   return (
-    <div className="flex overflow-hidden rounded-sm border border-line-strong">
+    <div className="flex overflow-hidden rounded-sm border border-line-strong bg-panel">
       {options.map(([v, label], idx) => (
         <button
           key={v}
           onClick={() => onChange(v)}
-          className={`px-2.5 py-1.5 text-[12.5px] font-medium transition-colors ${
+          className={`px-3 py-2 text-[13.5px] font-semibold transition-colors ${
             idx > 0 ? 'border-l border-line-strong' : ''
-          } ${value === v ? 'bg-accent text-white' : 'bg-panel text-ink-2 hover:bg-sunken'}`}
+          } ${value === v ? 'bg-accent text-white' : 'bg-panel text-ink-2 hover:bg-accent-soft'}`}
         >
           {label}
         </button>

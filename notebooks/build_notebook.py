@@ -541,7 +541,7 @@ X_tr, X_te, y_tr, y_te, idx_tr, idx_te = train_test_split(
     X, y, np.arange(len(y)), test_size=0.35, random_state=SEED, stratify=y
 )
 
-clf = LogisticRegression(max_iter=3000, C=1.0, multi_class="auto")
+clf = LogisticRegression(max_iter=3000, C=1.0)
 clf.fit(X_tr, y_tr)
 base_pred = clf.predict(X_te)
 base_acc_all = accuracy_score(y_te, base_pred)

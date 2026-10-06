@@ -57,3 +57,5 @@ next-env.d.ts
 __pycache__/
 *.pyc
 *.log
+/notebooks/run.log
+/notebooks/monitor.log

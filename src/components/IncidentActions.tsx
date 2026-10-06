@@ -80,24 +80,24 @@ export function CaseActions({ incident }: { incident: Incident }) {
   return (
     <div className="space-y-4">
       <div>
-        <label className="label mb-1 block">Acting as</label>
+        <label className="mb-1.5 block text-[14px] font-semibold text-ink-2">You are acting as</label>
         <input
-          className="field py-1.5 text-[13px]"
+          className="field py-2 text-[14px]"
           value={official}
           onChange={(e) => setOfficial(e.target.value)}
           placeholder="Your name or role"
         />
-        <p className="mt-1 text-[11px] text-faint">Recorded against every action you take below.</p>
+        <p className="mt-1.5 text-[12.5px] text-muted">Your name is saved with every action you take here.</p>
       </div>
 
       <div>
-        <div className="label mb-1.5">Lifecycle</div>
+        <div className="mb-1.5 text-[14px] font-semibold text-ink-2">Move to the next stage</div>
         <div className="flex flex-wrap gap-1.5">
           {STATUS_FLOW.map((s) => (
             <button
               key={s}
-              className={`btn py-1.5 text-[12.5px] ${
-                incident.status === s ? 'border-accent bg-accent-soft text-accent' : ''
+              className={`btn py-1.5 text-[13.5px] ${
+                incident.status === s ? 'border-accent bg-accent text-white disabled:opacity-100' : ''
               }`}
               disabled={busy || incident.status === s}
               onClick={() => patch({ status: s, actor: official })}
@@ -106,23 +106,23 @@ export function CaseActions({ incident }: { incident: Incident }) {
             </button>
           ))}
         </div>
-        <p className="mt-1.5 text-[11px] leading-snug text-faint">
-          Closed is not in this row on purpose — it is reached only by confirming closure against
-          post-action evidence.
+        <p className="mt-2 text-[12.5px] leading-snug text-muted">
+          There is no "Closed" button here on purpose. An incident is closed only from the "Close this
+          incident" box below, after the fix has been checked.
         </p>
       </div>
 
       <div>
-        <div className="label mb-1.5">Assignment</div>
+        <div className="mb-1.5 text-[14px] font-semibold text-ink-2">Who is responding?</div>
         <div className="flex gap-2">
           <input
-            className="field py-1.5 text-[13px]"
-            placeholder="Crew or unit"
+            className="field py-2 text-[14px]"
+            placeholder="Crew or unit name"
             value={crew}
             onChange={(e) => setCrew(e.target.value)}
           />
           <button
-            className="btn py-1.5 text-[12.5px]"
+            className="btn btn-primary py-1.5 text-[13.5px]"
             disabled={busy}
             onClick={() => patch({ assignee: crew, actor: official })}
           >
@@ -134,7 +134,7 @@ export function CaseActions({ incident }: { incident: Incident }) {
       <PriorityOverride incident={incident} official={official} />
       <Recategorise incident={incident} official={official} />
 
-      {error && <p className="text-[12.5px] text-p1">{error}</p>}
+      {error && <p className="text-[13px] font-medium text-p1">{error}</p>}
     </div>
   );
 }
@@ -146,36 +146,40 @@ function PriorityOverride({ incident, official }: { incident: Incident; official
 
   return (
     <div className="border-t border-line pt-3">
-      <div className="label mb-1.5">Priority — recommended {incident.recommendedPriority.band}</div>
+      <div className="mb-1.5 text-[14px] font-semibold text-ink-2">Change the urgency</div>
+      <p className="mb-2 text-[12.5px] text-muted">
+        The AI suggested {PRIORITY_LABELS[incident.recommendedPriority.band]} ({incident.recommendedPriority.band}).
+        You can set a different level.
+      </p>
       <div className="flex flex-wrap gap-1.5">
         {PRIORITY_BANDS.map((b: PriorityBand) => (
           <button
             key={b}
-            className={`btn py-1.5 text-[12.5px] ${current === b ? 'border-accent bg-accent-soft text-accent' : ''}`}
+            className={`btn py-1.5 text-[13.5px] ${current === b ? 'border-accent bg-accent text-white' : ''}`}
             disabled={busy}
             onClick={() => patch({ priorityOverride: { band: b, reason }, actor: official })}
             title={PRIORITY_LABELS[b]}
           >
-            {b}
+            {PRIORITY_LABELS[b]}
           </button>
         ))}
         {incident.priorityOverride && (
           <button
-            className="btn py-1.5 text-[12.5px]"
+            className="btn py-1.5 text-[13.5px]"
             disabled={busy}
             onClick={() => patch({ priorityOverride: { band: 'clear' }, actor: official })}
           >
-            Clear override
+            Use the AI's suggestion
           </button>
         )}
       </div>
       <input
-        className="field mt-2 py-1.5 text-[13px]"
-        placeholder="Reason for overriding (recorded)"
+        className="field mt-2 py-2 text-[14px]"
+        placeholder="Why are you changing it? (saved)"
         value={reason}
         onChange={(e) => setReason(e.target.value)}
       />
-      {error && <p className="mt-1 text-[12.5px] text-p1">{error}</p>}
+      {error && <p className="mt-1 text-[13px] font-medium text-p1">{error}</p>}
     </div>
   );
 }
@@ -186,16 +190,15 @@ function Recategorise({ incident, official }: { incident: Incident; official: st
 
   return (
     <div className="border-t border-line pt-3">
-      <div className="label mb-1.5">Category</div>
+      <div className="mb-1.5 text-[14px] font-semibold text-ink-2">Type of incident</div>
       {incident.needsManualCategorisation && (
-        <p className="mb-2 rounded-sm bg-p2-soft px-2.5 py-2 text-[12px] leading-snug text-p2">
-          The classifier did not reach the confidence threshold, so no category was committed. Assign one
-          here.
+        <p className="mb-2 rounded-sm bg-p2-soft px-3 py-2.5 text-[13px] leading-snug text-p2">
+          The AI was not sure enough to choose a type, so it left this blank for you. Pick one below.
         </p>
       )}
       <div className="flex gap-2">
         <select
-          className="field py-1.5 text-[13px]"
+          className="field py-2 text-[14px]"
           value={to}
           onChange={(e) => setTo(e.target.value as IncidentCategory)}
         >
@@ -206,15 +209,15 @@ function Recategorise({ incident, official }: { incident: Incident; official: st
           ))}
         </select>
         <button
-          className="btn py-1.5 text-[12.5px]"
+          className="btn btn-primary py-1.5 text-[13.5px]"
           disabled={busy || to === incident.category}
           onClick={() => patch({ recategorise: { to }, actor: official })}
         >
           Apply
         </button>
       </div>
-      <p className="mt-1 text-[11px] leading-snug text-faint">{CATEGORY_DESCRIPTIONS[to]}</p>
-      {error && <p className="mt-1 text-[12.5px] text-p1">{error}</p>}
+      <p className="mt-1.5 text-[12.5px] leading-snug text-muted">{CATEGORY_DESCRIPTIONS[to]}</p>
+      {error && <p className="mt-1 text-[13px] font-medium text-p1">{error}</p>}
     </div>
   );
 }
@@ -226,12 +229,12 @@ export function SeparateButton({ incidentId, reportId }: { incidentId: string; r
   return (
     <>
       <button
-        className="btn px-2 py-1 text-[11.5px]"
+        className="btn px-2.5 py-1 text-[12.5px]"
         disabled={busy}
         onClick={() => patch({ separate: { reportId }, actor: official })}
-        title="This report describes a different event"
+        title="This report is about a different problem. Move it into its own incident."
       >
-        {busy ? 'Separating…' : 'Not the same event'}
+        {busy ? 'Separating…' : 'Not the same problem'}
       </button>
       {error && <span className="ml-2 text-[11.5px] text-p1">{error}</span>}
     </>
@@ -247,7 +250,7 @@ export function ClosureConfirm({ incident }: { incident: Incident }) {
   if (incident.status === 'closed') {
     return (
       <div className="space-y-2">
-        <div className="rounded-sm bg-ok-soft px-3 py-2.5 text-[13px] text-ok">
+        <div className="rounded-sm bg-ok-soft px-3.5 py-3 text-[14px] font-semibold text-ok">
           Closed by {incident.closure?.by ?? 'an official'}.
         </div>
         {incident.closure?.note && (
@@ -272,22 +275,22 @@ export function ClosureConfirm({ incident }: { incident: Incident }) {
   return (
     <div className="space-y-2.5">
       <textarea
-        className="field min-h-[56px] resize-y text-[13px]"
-        placeholder="What you inspected before confirming (recorded)"
+        className="field min-h-[64px] resize-y text-[14px]"
+        placeholder="What did you check before closing it? (saved)"
         value={note}
         onChange={(e) => setNote(e.target.value)}
       />
       <button
-        className="btn btn-primary w-full py-2 text-[13px]"
+        className="btn btn-primary w-full py-2.5 text-[14.5px]"
         disabled={busy || blocked}
         onClick={() => patch({ confirmClosure: { note }, actor: official })}
       >
-        {busy ? 'Closing…' : 'Confirm closure'}
+        {busy ? 'Closing…' : 'Confirm and close'}
       </button>
-      <p className="text-[11.5px] leading-snug text-faint">
+      <p className="text-[12.5px] leading-snug text-muted">
         {blocked
-          ? 'Post-action evidence must be submitted for verification before an incident can be closed.'
-          : 'Closure is your decision, not the model’s. The verification verdict below is advisory.'}
+          ? 'To close this, first send an after-photo using "Was it fixed?" below.'
+          : 'Closing is your decision, not the AI’s. The AI check below is only advice.'}
       </p>
       {error && <p className="text-[12.5px] text-p1">{error}</p>}
     </div>
@@ -328,21 +331,21 @@ export function VerificationForm({ id }: { id: string }) {
         ref={fileRef}
         type="file"
         accept="image/jpeg,image/png,image/webp"
-        className="block w-full text-[12.5px] text-muted file:mr-3 file:rounded-sm file:border file:border-line-strong file:bg-panel file:px-2.5 file:py-1 file:text-[12.5px] file:text-ink-2 hover:file:bg-sunken"
+        className="block w-full text-[13.5px] text-muted file:mr-3 file:rounded-sm file:border file:border-accent file:bg-accent-soft file:px-3 file:py-1.5 file:text-[13.5px] file:font-semibold file:text-accent-ink hover:file:bg-accent hover:file:text-white"
       />
       <textarea
-        className="field min-h-[56px] resize-y text-[13px]"
-        placeholder="Crew closure note (optional)"
+        className="field min-h-[64px] resize-y text-[14px]"
+        placeholder="Note from the crew (optional)"
         value={note}
         onChange={(e) => setNote(e.target.value)}
       />
-      <button className="btn w-full py-2 text-[13px]" disabled={busy}>
-        {busy ? 'Checking after-evidence…' : 'Submit post-action evidence'}
+      <button className="btn w-full py-2.5 text-[14.5px]" disabled={busy}>
+        {busy ? 'Checking the photo…' : 'Send after-photo for checking'}
       </button>
-      {error && <p className="text-[12.5px] text-p1">{error}</p>}
-      <p className="text-[11.5px] leading-snug text-faint">
-        The after-photograph is checked against the original complaint. The verdict is advisory: it can
-        send the incident back to in-progress, but it cannot close it.
+      {error && <p className="text-[13px] font-medium text-p1">{error}</p>}
+      <p className="text-[12.5px] leading-snug text-muted">
+        The AI compares your after-photo with the original report. If it looks unfixed, the incident goes
+        back to "In progress". It can never close an incident.
       </p>
     </form>
   );

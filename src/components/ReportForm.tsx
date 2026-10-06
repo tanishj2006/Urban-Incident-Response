@@ -12,8 +12,8 @@ import { CHANNEL_LABELS } from '@/lib/taxonomy';
  * submitting a second accident report there demonstrates a live merge.
  */
 const PRESETS: { label: string; note: string; lat: number; lng: number }[] = [
-  { label: 'Sion Circle', note: 'merges with INC-2026-0001', lat: 19.04021, lng: 72.86271 },
-  { label: 'Hindmata Jn.', note: 'merges with INC-2026-0003', lat: 19.0076, lng: 72.84101 },
+  { label: 'Sion Circle', note: 'joins existing case INC-2026-0001', lat: 19.04021, lng: 72.86271 },
+  { label: 'Hindmata Jn.', note: 'joins existing case INC-2026-0003', lat: 19.0076, lng: 72.84101 },
   { label: 'Chembur Station', note: 'new location', lat: 19.0624, lng: 72.8988 },
   { label: 'Andheri East', note: 'new location', lat: 19.1136, lng: 72.8697 },
 ];
@@ -150,9 +150,9 @@ export default function ReportForm() {
     <form onSubmit={submit} className="grid gap-5 lg:grid-cols-[1.35fr_1fr]">
       <div className="space-y-5">
         <section className="panel p-4">
-          <h2 className="label mb-3">Evidence</h2>
+          <StepHead n={1} title="What happened?" hint="Describe it in your own words." />
 
-          <label className="mb-1.5 block text-[13px] font-medium text-ink-2">Written description</label>
+          <label className="mb-1.5 block text-[14px] font-semibold text-ink-2">Written description</label>
           <textarea
             className="field min-h-[110px] resize-y"
             placeholder="Describe what you can see. For example: two-wheeler and auto collided at the circle, rider is on the road and not getting up, traffic fully stuck."
@@ -161,30 +161,34 @@ export default function ReportForm() {
           />
 
           <div className="mt-4 flex items-center justify-between gap-3">
-            <label className="text-[13px] font-medium text-ink-2">Voice note</label>
-            <button type="button" className="btn py-1.5 text-[12.5px]" onClick={toggleDictation}>
-              {listening ? '■ Stop dictation' : '● Start dictation'}
+            <label className="text-[14px] font-semibold text-ink-2">
+              Voice note <span className="font-normal text-faint">(optional)</span>
+            </label>
+            <button type="button" className="btn py-1.5 text-[13px]" onClick={toggleDictation}>
+              {listening ? '■ Stop recording' : '● Speak instead of typing'}
             </button>
           </div>
           <textarea
             className="field mt-1.5 min-h-[70px] resize-y"
-            placeholder="Transcript appears here as you speak, or type it directly."
+            placeholder="What you say appears here as text. You can also type it."
             value={transcript}
             onChange={(e) => setTranscript(e.target.value)}
           />
           <p className="mt-1.5 text-[11.5px] leading-snug text-faint">
             {speechError ??
-              'Speech is transcribed on-device by the browser; the resulting text enters the multimodal extraction prompt alongside the photograph.'}
+              'Your browser turns your voice into text. That text is read together with the photo.'}
           </p>
 
           <div className="mt-4">
-            <label className="mb-1.5 block text-[13px] font-medium text-ink-2">Photograph</label>
+            <label className="mb-1.5 block text-[14px] font-semibold text-ink-2">
+              Photo <span className="font-normal text-faint">(recommended)</span>
+            </label>
             <input
               ref={fileRef}
               type="file"
               accept="image/jpeg,image/png,image/webp"
               onChange={pickFile}
-              className="block w-full text-[13px] text-muted file:mr-3 file:rounded-sm file:border file:border-line-strong file:bg-panel file:px-3 file:py-1.5 file:text-[13px] file:text-ink-2 hover:file:bg-sunken"
+              className="block w-full text-[13px] text-muted file:mr-3 file:rounded-sm file:border file:border-accent file:bg-accent-soft file:px-3.5 file:py-2 file:text-[14px] file:font-semibold file:text-accent-ink hover:file:bg-accent hover:file:text-white"
             />
             {preview && (
               // eslint-disable-next-line @next/next/no-img-element
@@ -200,8 +204,8 @@ export default function ReportForm() {
 
       <div className="space-y-5">
         <section className="panel p-4">
-          <h2 className="label mb-3">Source</h2>
-          <label className="mb-1.5 block text-[13px] font-medium text-ink-2">Channel</label>
+          <StepHead n={2} title="About this report" hint="Helps the team know where it came from." />
+          <label className="mb-1.5 block text-[14px] font-semibold text-ink-2">How is it being reported?</label>
           <select className="field" value={channel} onChange={(e) => setChannel(e.target.value)}>
             {Object.entries(CHANNEL_LABELS).map(([k, v]) => (
               <option key={k} value={k}>
@@ -210,19 +214,19 @@ export default function ReportForm() {
             ))}
           </select>
 
-          <label className="mt-3 mb-1.5 block text-[13px] font-medium text-ink-2">
-            Reporter <span className="font-normal text-faint">(optional)</span>
+          <label className="mt-3 mb-1.5 block text-[14px] font-semibold text-ink-2">
+            Your name <span className="font-normal text-faint">(optional)</span>
           </label>
           <input
             className="field"
             value={reporterName}
             onChange={(e) => setReporterName(e.target.value)}
-            placeholder="Name or handle"
+            placeholder="Leave blank to stay anonymous"
           />
         </section>
 
         <section className="panel p-4">
-          <h2 className="label mb-3">Location</h2>
+          <StepHead n={3} title="Where is it?" hint="Pick a place below, or use your location." />
           <div className="flex flex-wrap gap-1.5">
             {PRESETS.map((p) => (
               <button
@@ -232,25 +236,25 @@ export default function ReportForm() {
                   setLat(String(p.lat));
                   setLng(String(p.lng));
                 }}
-                className={`rounded-sm border px-2.5 py-1.5 text-left text-[12px] transition-colors ${
+                className={`rounded-sm border px-3 py-2 text-left text-[13px] transition-colors ${
                   Number(lat) === p.lat
-                    ? 'border-accent bg-accent-soft text-accent'
-                    : 'border-line-strong bg-panel text-ink-2 hover:bg-sunken'
+                    ? 'border-accent bg-accent-soft text-accent-ink'
+                    : 'border-line-strong bg-panel text-ink-2 hover:border-accent hover:bg-accent-soft'
                 }`}
               >
                 <span className="block font-medium">{p.label}</span>
-                <span className="block text-[11px] opacity-70">{p.note}</span>
+                <span className="block text-[11.5px] opacity-70">{p.note}</span>
               </button>
             ))}
           </div>
 
           <div className="mt-3 grid grid-cols-2 gap-2">
             <div>
-              <label className="label mb-1 block">Latitude</label>
+              <label className="mb-1 block text-[13px] font-semibold text-muted">Latitude</label>
               <input className="field mono" value={lat} onChange={(e) => setLat(e.target.value)} />
             </div>
             <div>
-              <label className="label mb-1 block">Longitude</label>
+              <label className="mb-1 block text-[13px] font-semibold text-muted">Longitude</label>
               <input className="field mono" value={lng} onChange={(e) => setLng(e.target.value)} />
             </div>
           </div>
@@ -265,11 +269,11 @@ export default function ReportForm() {
         )}
 
         <button type="submit" className="btn btn-primary w-full py-2.5" disabled={busy}>
-          {busy ? 'Running pipeline…' : 'Submit report'}
+          {busy ? 'Sending…' : 'Send report'}
         </button>
-        <p className="text-[11.5px] leading-snug text-faint">
-          Submission runs the full chain: extraction, context enrichment, duplicate adjudication,
-          scoring, routing and dispatch-packet generation. Each step is reported back.
+        <p className="text-[12.5px] leading-snug text-muted">
+          After you send it, the system reads your report, checks for repeats, rates how urgent it is and
+          picks the right department. You will see each step.
         </p>
       </div>
     </form>
@@ -288,27 +292,27 @@ function TraceView({ result, onAgain }: { result: SubmitResult; onAgain: () => v
       <div className="panel p-5">
         <div className="flex flex-wrap items-center gap-2">
           <span className={`chip ${result.merged ? 'bg-p2-soft text-p2' : 'bg-ok-soft text-ok'}`}>
-            {result.merged ? 'Merged into an existing incident' : 'New incident created'}
+            {result.merged ? 'Linked to an existing incident' : 'New incident created'}
           </span>
           <span className="mono text-faint">{result.incidentId}</span>
         </div>
-        <h2 className="mt-2.5 text-[19px] font-semibold tracking-tight">
-          Priority {result.priority.band} · {result.priority.score}/100
+        <h2 className="mt-2.5 text-[21px] font-bold tracking-tight">
+          Urgency: {result.priority.band} ({result.priority.score} out of 100)
         </h2>
-        <p className="mt-1 text-[14px] text-muted">Routed to {result.department}.</p>
+        <p className="mt-1 text-[15px] text-muted">Sent to {result.department}.</p>
         <div className="mt-4 flex flex-wrap gap-2">
           <Link href={`/incidents/${result.incidentId}`} className="btn btn-primary">
-            Open the incident
+            Open this incident
           </Link>
           <button className="btn" onClick={onAgain}>
-            Submit another report
+            Report another issue
           </button>
         </div>
       </div>
 
       <section className="panel overflow-hidden">
         <header className="border-b border-line px-4 py-2.5">
-          <h2 className="label">Pipeline trace</h2>
+          <h2 className="text-[15.5px] font-semibold">What the system did, step by step</h2>
         </header>
         <ol>
           {result.trace.map((s, i) => (
@@ -319,14 +323,14 @@ function TraceView({ result, onAgain }: { result: SubmitResult; onAgain: () => v
                   <span className="label">{s.stage}</span>
                   <span className="text-[13.5px] font-medium text-ink">{s.label}</span>
                   <span className={`text-[11.5px] font-medium ${tone[s.status]}`}>
-                    {s.status === 'fallback' ? 'fell back to rules' : s.status}
+                    {s.status === 'fallback' ? 'used built-in rules' : s.status}
                   </span>
                   {s.engine && (
                     <span className="chip bg-sunken text-muted">
-                      {s.engine === 'gemini' ? 'Gemini' : 'Rule engine'}
+                      {s.engine === 'gemini' ? 'Gemini AI' : 'Rule engine'}
                     </span>
                   )}
-                  {s.cached && <span className="chip bg-p3-soft text-p3">cached</span>}
+                  {s.cached && <span className="chip bg-teal-soft text-teal">saved answer</span>}
                 </div>
                 <p className="mt-1 text-[13px] leading-snug text-muted">{s.detail}</p>
               </div>
@@ -335,6 +339,20 @@ function TraceView({ result, onAgain }: { result: SubmitResult; onAgain: () => v
           ))}
         </ol>
       </section>
+    </div>
+  );
+}
+
+function StepHead({ n, title, hint }: { n: number; title: string; hint: string }) {
+  return (
+    <div className="mb-4 flex items-center gap-3">
+      <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-accent text-[14px] font-bold text-white">
+        {n}
+      </span>
+      <div>
+        <h2 className="text-[17px] leading-tight font-semibold tracking-tight text-ink">{title}</h2>
+        <p className="text-[13px] leading-tight text-muted">{hint}</p>
+      </div>
     </div>
   );
 }

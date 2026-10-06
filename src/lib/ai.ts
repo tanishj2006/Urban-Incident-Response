@@ -54,6 +54,9 @@ function modelCandidates(): string[] {
  */
 const MAX_ATTEMPTS = 3;
 const PER_ATTEMPT_MS = 18_000;
+/** Keys the API has refused with 403 during this server's lifetime. */
+const DEAD_KEYS = new Set<string>();
+
 const TOTAL_BUDGET_MS = 30_000;
 
 /**
@@ -234,6 +237,7 @@ export async function runPrompt<T>(
     let modelUnusable = false;
 
     for (let k = 0; k < keys.length && !modelUnusable; k++) {
+      if (DEAD_KEYS.has(keys[k])) continue;
       if (Date.now() - started > TOTAL_BUDGET_MS) {
         lastError = `${lastError}; budget of ${TOTAL_BUDGET_MS / 1000}s spent, stopped trying`;
         budgetSpent = true;
@@ -247,6 +251,13 @@ export async function runPrompt<T>(
           signal: AbortSignal.timeout(PER_ATTEMPT_MS),
         });
 
+        // 403 means this key's project is refused outright. It will not recover
+        // within a run, so it is skipped from now on instead of retried per call.
+        if (res.status === 403) {
+          DEAD_KEYS.add(keys[k]);
+          lastError = `key${k + 1}: HTTP 403 (project denied access)`;
+          continue;
+        }
         // 429 is this key's daily quota for this model — try the next key.
         if (res.status === 429) {
           lastError = `${model}/key${k + 1}: HTTP 429 (daily quota)`;

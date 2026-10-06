@@ -1,11 +1,19 @@
 import Link from 'next/link';
 import { listIncidents } from '@/lib/store';
 import { effectivePriority } from '@/lib/types';
-import { CATEGORY_LABELS } from '@/lib/taxonomy';
+import { CATEGORY_LABELS, SLA_MINUTES } from '@/lib/taxonomy';
 import PipelineDiagram from '@/components/PipelineDiagram';
 import { Metric, Panel, PriorityChip, StatusChip, timeAgo } from '@/components/ui';
 
 export const dynamic = 'force-dynamic';
+
+const BAND_BAR = { P1: 'bg-p1', P2: 'bg-p2', P3: 'bg-[#e8a90c]', P4: 'bg-p4' } as const;
+
+function within(mins: number): string {
+  if (mins < 60) return `${mins} minutes`;
+  if (mins < 1440) return `${mins / 60} hours`;
+  return `${mins / 1440} day${mins / 1440 > 1 ? 's' : ''}`;
+}
 
 export default async function OverviewPage() {
   const incidents = await listIncidents();
@@ -27,163 +35,202 @@ export default async function OverviewPage() {
   const maxBand = Math.max(1, ...byBand.map((b) => b.count));
 
   return (
-    <div className="space-y-7">
-      <header>
-        <h1 className="text-[22px] font-semibold tracking-tight">Urban Incident Response</h1>
-        <p className="mt-1.5 max-w-[68ch] text-[14.5px] text-muted">
-          An intelligent coordination layer that turns fragmented citizen reports — photographs, written
-          descriptions, voice notes and location — into structured, prioritised incidents routed to the
-          department that owns them.
-        </p>
+    <div className="space-y-8">
+      <header className="panel overflow-hidden">
+        <div className="bg-gradient-to-r from-accent-soft via-violet-soft/60 to-panel px-6 py-7 lg:px-8">
+          <h1 className="text-[28px] leading-tight font-bold tracking-tight text-ink">
+            Every report, handled and checked.
+          </h1>
+          <p className="mt-2 max-w-[62ch] text-[16px] leading-relaxed text-ink-2">
+            People report problems in the city with a photo, a few words, a voice note or a location. This
+            system reads each report, works out how urgent it is, sends it to the right department, and makes
+            sure a person confirms the fix.
+          </p>
+          <div className="mt-5 flex flex-wrap gap-2.5">
+            <Link href="/report" className="btn btn-primary">
+              Report an issue
+            </Link>
+            <Link href="/dashboard" className="btn">
+              See all incidents
+            </Link>
+          </div>
+        </div>
       </header>
 
       <section>
-        <div className="label mb-2.5">Closed-loop pipeline</div>
+        <h2 className="mb-3 text-[17px] font-semibold tracking-tight">How a report is handled</h2>
         <PipelineDiagram />
       </section>
 
-      <section className="grid grid-cols-2 gap-3 lg:grid-cols-5">
-        <Metric value={open.length} label="Open incidents" />
-        <Metric value={p1.length} label="P1 critical" tone={p1.length ? 'text-p1' : undefined} />
-        <Metric
-          value={breached.length}
-          label="Past response target"
-          tone={breached.length ? 'text-p2' : undefined}
-        />
-        <Metric value={collapsed} label="Duplicate reports linked" />
-        <Metric value={closed.length} label="Closed by an official" tone="text-ok" />
+      <section>
+        <h2 className="mb-3 text-[17px] font-semibold tracking-tight">Right now</h2>
+        <div className="grid gap-3.5 sm:grid-cols-2 lg:grid-cols-5">
+          <Metric value={open.length} label="Open incidents" note="Still being handled" icon="inbox" tone="blue" alert={false} />
+          <Metric
+            value={p1.length}
+            label="Urgent"
+            note={`Need a response within ${within(SLA_MINUTES.P1)}`}
+            icon="alert"
+            tone="red"
+            alert={p1.length > 0}
+          />
+          <Metric
+            value={breached.length}
+            label="Running late"
+            note="Past their response time"
+            icon="clock"
+            tone="orange"
+            alert={breached.length > 0}
+          />
+          <Metric
+            value={collapsed}
+            label="Repeat reports"
+            note="Linked to an existing case"
+            icon="link"
+            tone="violet"
+            alert={false}
+          />
+          <Metric
+            value={closed.length}
+            label="Closed"
+            note="Confirmed by a named official"
+            icon="check"
+            tone="green"
+            alert={closed.length > 0}
+          />
+        </div>
       </section>
 
       <div className="grid gap-5 lg:grid-cols-[1.45fr_1fr]">
-        <Panel title="Active queue" dense>
+        <Panel
+          title="Incidents to look at"
+          hint="Most urgent first. Select one to see the full case."
+          dense
+        >
           <ul>
             {open.slice(0, 7).map((inc) => (
               <li key={inc.id} className="border-b border-line last:border-0">
-                <Link href={`/incidents/${inc.id}`} className="block px-4 py-3 hover:bg-sunken">
+                <Link href={`/incidents/${inc.id}`} className="block px-5 py-3.5 transition-colors hover:bg-accent-soft/50">
                   <div className="flex items-start justify-between gap-3">
                     <div className="min-w-0">
-                      <div className="flex items-center gap-2">
-                        <span className="mono text-faint">{inc.id}</span>
+                      <div className="flex flex-wrap items-center gap-2">
                         <PriorityChip band={effectivePriority(inc).band} withLabel={false} />
+                        <span className="mono text-faint">{inc.id}</span>
                         {inc.reports.length > 1 && (
-                          <span className="chip bg-sunken text-muted">{inc.reports.length} linked</span>
+                          <span className="chip bg-violet-soft text-violet">{inc.reports.length} reports</span>
                         )}
                         {inc.needsManualCategorisation && (
-                          <span className="chip bg-p2-soft text-p2">needs categorising</span>
+                          <span className="chip bg-p2-soft text-p2">Needs a category</span>
                         )}
                       </div>
-                      <div className="mt-1 truncate text-[14px] font-medium text-ink">{inc.title}</div>
-                      <div className="mt-0.5 truncate text-[12.5px] text-muted">
+                      <div className="mt-1.5 truncate text-[15.5px] font-semibold text-ink">{inc.title}</div>
+                      <div className="mt-0.5 truncate text-[13.5px] text-muted">
                         {CATEGORY_LABELS[inc.category]} · {inc.department.name}
                       </div>
                     </div>
                     <div className="shrink-0 text-right">
                       <StatusChip status={inc.status} />
-                      <div className="mt-1.5 text-[11.5px] text-faint">{timeAgo(inc.createdAt)}</div>
+                      <div className="mt-1.5 text-[12.5px] text-faint">{timeAgo(inc.createdAt)}</div>
                     </div>
                   </div>
                 </Link>
               </li>
             ))}
+            {open.length === 0 && (
+              <li className="px-5 py-8 text-center text-[14px] text-faint">
+                Nothing open. New reports will appear here.
+              </li>
+            )}
           </ul>
-          <div className="border-t border-line px-4 py-2.5">
-            <Link href="/dashboard" className="text-[13px] font-medium text-accent hover:underline">
-              Open the operations console →
+          <div className="border-t border-line px-5 py-3">
+            <Link href="/dashboard" className="text-[14px] font-semibold text-accent hover:underline">
+              See all incidents →
             </Link>
           </div>
         </Panel>
 
         <div className="space-y-5">
-          <Panel title="Open by priority">
-            <div className="space-y-2.5">
+          <Panel title="How urgent are they?" hint="Open incidents grouped by urgency, with the target response time.">
+            <div className="space-y-3.5">
               {byBand.map((b) => (
-                <div key={b.band} className="flex items-center gap-3">
-                  <span className="w-7 shrink-0">
+                <div key={b.band}>
+                  <div className="mb-1.5 flex items-center justify-between gap-3">
                     <PriorityChip band={b.band} withLabel={false} />
-                  </span>
-                  <div className="h-2 flex-1 rounded-xs bg-sunken">
+                    <span className="text-[12.5px] text-muted">respond within {within(SLA_MINUTES[b.band])}</span>
+                    <span className="tnum w-5 text-right text-[14.5px] font-bold text-ink">{b.count}</span>
+                  </div>
+                  <div className="h-2.5 rounded-full bg-sunken">
                     <div
-                      className={`h-2 rounded-xs ${
-                        b.band === 'P1'
-                          ? 'bg-p1'
-                          : b.band === 'P2'
-                            ? 'bg-p2'
-                            : b.band === 'P3'
-                              ? 'bg-p3'
-                              : 'bg-p4'
-                      }`}
+                      className={`h-2.5 rounded-full ${BAND_BAR[b.band]}`}
                       style={{ width: `${(b.count / maxBand) * 100}%` }}
                     />
                   </div>
-                  <span className="tnum w-5 text-right text-[13px] text-ink-2">{b.count}</span>
                 </div>
               ))}
             </div>
           </Panel>
 
-          <Panel title="Where humans decide">
-            <dl className="space-y-2 text-[13.5px]">
-              <div className="flex justify-between gap-3">
-                <dt className="text-muted">Held for manual categorising</dt>
-                <dd className={`tnum ${triage.length ? 'text-p2' : 'text-ink-2'}`}>{triage.length}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-muted">Awaiting closure confirmation</dt>
-                <dd className={`tnum ${awaitingConfirmation.length ? 'text-p3' : 'text-ink-2'}`}>
-                  {awaitingConfirmation.length}
-                </dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-muted">Closures rejected or partial</dt>
-                <dd className="tnum text-p1">{rejected.length}</dd>
-              </div>
-              <div className="flex justify-between gap-3">
-                <dt className="text-muted">Priorities overridden</dt>
-                <dd className="tnum text-ink-2">{incidents.filter((i) => i.priorityOverride).length}</dd>
-              </div>
+          <Panel title="Where a person decides" hint="The system suggests. People confirm.">
+            <dl className="space-y-2.5 text-[14.5px]">
+              <Row label="Waiting for someone to pick a category" n={triage.length} tone="text-p2" />
+              <Row label="Fixed, waiting for closure sign-off" n={awaitingConfirmation.length} tone="text-teal" />
+              <Row label="Fix not accepted, sent back" n={rejected.length} tone="text-p1" />
+              <Row
+                label="Urgency changed by an official"
+                n={incidents.filter((i) => i.priorityOverride).length}
+                tone="text-violet"
+              />
             </dl>
-            <p className="mt-3 border-t border-line pt-3 text-[12.5px] leading-snug text-muted">
-              The system classifies, links, scores and flags. An official verifies, assigns, overrides and
-              closes. Nothing here reaches <strong className="font-medium text-ink-2">Closed</strong> without
-              a named person confirming it.
+            <p className="mt-4 rounded-sm bg-ok-soft px-3.5 py-3 text-[13.5px] leading-snug text-ink-2">
+              An incident only becomes <strong className="font-semibold text-ok">Closed</strong> when a named
+              official confirms it. The AI can recommend, never close.
             </p>
           </Panel>
         </div>
       </div>
 
-      <Panel title="Scope — what is real and what is not">
-        <div className="grid gap-x-8 gap-y-2.5 text-[13.5px] sm:grid-cols-2">
-          <div>
-            <div className="mb-1.5 font-medium text-ok">Implemented end to end</div>
-            <ul className="space-y-1 text-muted">
-              <li>Multimodal extraction from image, text, voice transcript and GPS</li>
-              <li>Reverse geocoding (OpenStreetMap) and live weather (Open-Meteo)</li>
-              <li>Duplicate collapse: geo-temporal gate, then model adjudication</li>
-              <li>Transparent priority scoring with a visible breakdown</li>
-              <li>Department routing, dispatch packet, SLA and escalation rules</li>
-              <li>Resolution verification from after-evidence, with reopening</li>
+      <Panel title="What is real, and what is simulated" hint="So nothing in this demo is mistaken for something it is not.">
+        <div className="grid gap-x-8 gap-y-4 text-[14.5px] sm:grid-cols-2">
+          <div className="rounded-sm bg-ok-soft/60 p-4">
+            <div className="mb-2 font-semibold text-ok">Working end to end</div>
+            <ul className="space-y-1.5 text-ink-2">
+              <li>Reads photos, text, voice transcripts and GPS location together</li>
+              <li>Finds the street address (OpenStreetMap) and live weather (Open-Meteo)</li>
+              <li>Spots repeat reports of the same problem and links them</li>
+              <li>Scores urgency with a visible, fixed formula</li>
+              <li>Picks the department and writes the dispatch details</li>
+              <li>Checks the fix from an after-photo, and reopens if it fails</li>
             </ul>
           </div>
-          <div>
-            <div className="mb-1.5 font-medium text-p2">Simulated or out of scope</div>
-            <ul className="space-y-1 text-muted">
+          <div className="rounded-sm bg-p2-soft/70 p-4">
+            <div className="mb-2 font-semibold text-p2">Simulated or not included</div>
+            <ul className="space-y-1.5 text-ink-2">
               <li>
-                <strong className="font-medium text-ink-2">Traffic data</strong> — no free real-time feed
-                exists for this region; a clearly-flagged simulated provider sits behind the same interface
+                <strong className="font-semibold">Traffic data</strong>: no free live feed exists for this
+                region, so a clearly labelled simulated source is used
               </li>
               <li>
-                <strong className="font-medium text-ink-2">Authority notification</strong> — no municipality
-                exposes an ingestion API, so dispatch packets are generated in full and queued to an in-app
-                outbox rather than transmitted
+                <strong className="font-semibold">Alerting authorities</strong>: no municipality offers an
+                intake API, so dispatch messages are prepared and queued in the app, not sent
               </li>
               <li>
-                <strong className="font-medium text-ink-2">Video ingestion</strong> — not implemented; the
-                design extends to it but it was descoped
+                <strong className="font-semibold">Video</strong>: planned for later, not built
               </li>
             </ul>
           </div>
         </div>
       </Panel>
+    </div>
+  );
+}
+
+function Row({ label, n, tone }: { label: string; n: number; tone: string }) {
+  return (
+    <div className="flex items-center justify-between gap-3">
+      <dt className="text-ink-2">{label}</dt>
+      <dd className={`tnum min-w-7 rounded-full bg-sunken px-2.5 py-0.5 text-center font-bold ${n ? tone : 'text-faint'}`}>
+        {n}
+      </dd>
     </div>
   );
 }

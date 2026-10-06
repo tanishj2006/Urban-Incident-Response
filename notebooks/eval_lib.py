@@ -57,6 +57,10 @@ def cache_put(key: str, value) -> None:
     except Exception:
         pass
 
+# Keys the API has refused with 403 ("project has been denied access"). A 403 is
+# not a quota problem and does not clear, so such a key is skipped from then on.
+_dead_keys: set[int] = set()
+
 _rate_lock = threading.Lock()
 _last_request = [0.0]
 
@@ -216,6 +220,8 @@ def gemini_json(
     for model in models or GEMINI_MODELS:
         model_congested = False
         for ki, key in enumerate(keys):
+            if key in _dead_keys:
+                continue
             _throttle()
             try:
                 r = requests.post(
@@ -228,6 +234,11 @@ def gemini_json(
                 last = f"{model}: {exc}"
                 continue
 
+            # 403 means this key's project is refused outright: stop using it.
+            if r.status_code == 403:
+                _dead_keys.add(key)
+                last = f"key{ki + 1}: HTTP 403 (project denied access)"
+                continue
             # 429 is this key's daily quota for this model: try the next key.
             if r.status_code == 429:
                 last = f"{model}/key{ki + 1}: HTTP 429 (daily quota)"

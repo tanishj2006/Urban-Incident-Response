@@ -47,8 +47,8 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
 
   return (
     <div className="space-y-5">
-      <Link href="/dashboard" className="text-[13px] text-muted hover:text-accent">
-        ← Operations console
+      <Link href="/dashboard" className="inline-flex text-[14px] font-semibold text-accent hover:underline">
+        ← All incidents
       </Link>
 
       <header className="panel p-5">
@@ -57,44 +57,44 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
           <PriorityChip band={pr.band} />
           {inc.priorityOverride && (
             <span className="chip bg-accent-soft text-accent">
-              set by {inc.priorityOverride.by} · recommended {inc.recommendedPriority.band}
+              Urgency changed by {inc.priorityOverride.by} (AI suggested {inc.recommendedPriority.band})
             </span>
           )}
           <StatusChip status={inc.status} />
           {inc.needsManualCategorisation && (
-            <span className="chip bg-p2-soft text-p2">awaiting manual categorisation</span>
+            <span className="chip bg-p2-soft text-p2">Needs a category</span>
           )}
           {inc.reports.length > 1 && (
-            <span className="chip bg-sunken text-muted">{inc.reports.length} reports linked</span>
+            <span className="chip bg-violet-soft text-violet">{inc.reports.length} reports linked</span>
           )}
           {inc.slaBreached && !clockStopped && (
-            <span className="chip bg-p1-soft text-p1">Past response target</span>
+            <span className="chip bg-p1-soft text-p1">Running late</span>
           )}
         </div>
 
-        <h1 className="mt-2.5 text-[21px] leading-tight font-semibold tracking-tight">{inc.title}</h1>
-        <p className="mt-2 max-w-[78ch] text-[14.5px] leading-relaxed text-ink-2">{inc.fusedSummary}</p>
+        <h1 className="mt-3 text-[26px] leading-tight font-bold tracking-tight">{inc.title}</h1>
+        <p className="mt-2 max-w-[78ch] text-[15.5px] leading-relaxed text-ink-2">{inc.fusedSummary}</p>
 
-        <div className="mt-4 grid gap-x-8 gap-y-0 text-[13.5px] sm:grid-cols-2">
+        <div className="mt-5 grid gap-x-8 gap-y-0 rounded-sm bg-sunken px-4 py-3 text-[14.5px] sm:grid-cols-2">
           <dl>
             <KeyValue
-              k="Category"
+              k="Type"
               v={
                 <>
                   {CATEGORY_LABELS[inc.category]}
                   {inc.categoryOverride && (
                     <span className="mt-0.5 block text-[11.5px] text-faint">
-                      Re-categorised by {inc.categoryOverride.by} from{' '}
+                      Type changed by {inc.categoryOverride.by} from{' '}
                       {CATEGORY_LABELS[inc.categoryOverride.from]}
                     </span>
                   )}
                 </>
               }
             />
-            <KeyValue k="Subtype" v={inc.subtype} />
-            <KeyValue k="Location" v={inc.location.address ?? 'Address unresolved'} />
+            <KeyValue k="Detail" v={inc.subtype} />
+            <KeyValue k="Location" v={inc.location.address ?? 'Address not found'} />
             <KeyValue
-              k="Coordinates"
+              k="Map position"
               v={<span className="mono">{inc.location.lat.toFixed(5)}, {inc.location.lng.toFixed(5)}</span>}
             />
           </dl>
@@ -102,17 +102,17 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
             <KeyValue k="Department" v={inc.department.name} />
             <KeyValue k="Assigned to" v={inc.assignee ?? <span className="text-faint">Unassigned</span>} />
             <KeyValue k="Opened" v={`${timeAgo(inc.createdAt)} · ${new Date(inc.createdAt).toLocaleString('en-IN')}`} />
-            <KeyValue k="Status means" v={<span className="text-[12.5px]">{STATUS_MEANINGS[inc.status]}</span>} />
+            <KeyValue k="This stage means" v={<span className="text-[12.5px]">{STATUS_MEANINGS[inc.status]}</span>} />
             <KeyValue
-              k="Response target"
+              k="Time to respond"
               v={
                 closed ? (
                   <span className="text-ok">Closed by {inc.closure?.by ?? 'an official'}</span>
                 ) : clockStopped ? (
-                  <span className="text-muted">Clock stopped — awaiting closure confirmation</span>
+                  <span className="text-muted">Fix reported. Waiting for an official to confirm.</span>
                 ) : (
                   <span className={sla.overdue ? 'font-medium text-p1' : ''}>
-                    {sla.text} · {SLA_MINUTES[pr.band]} min target
+                    {sla.text} (target {SLA_MINUTES[pr.band]} min)
                   </span>
                 )
               }
@@ -126,9 +126,9 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
       <div className="grid gap-5 lg:grid-cols-[1.4fr_1fr]">
         {/* ─────────────────────────── Left column ─────────────────────────── */}
         <div className="space-y-5">
-          <Panel title="Recommended actions">
+          <Panel title="What to do now" hint="Suggested steps for the crew, based on the type of incident.">
             {inc.recommendedActions.length === 0 ? (
-              <Empty>No actions generated.</Empty>
+              <Empty>No suggested steps for this incident.</Empty>
             ) : (
               <ol className="space-y-2">
                 {inc.recommendedActions.map((a, i) => (
@@ -141,7 +141,11 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
             )}
           </Panel>
 
-          <Panel title={`Evidence — ${inc.reports.length} report${inc.reports.length > 1 ? 's' : ''}`} dense>
+          <Panel
+            title={`What was reported (${inc.reports.length} report${inc.reports.length > 1 ? 's' : ''})`}
+            hint="The original photos and words from citizens, with what the AI understood from each."
+            dense
+          >
             <ul>
               {inc.reports.map((r, i) => {
                 const ex = inc.extractions.find((e) => e.reportId === r.id);
@@ -170,7 +174,7 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
                         />
                       ) : (
                         <div className="flex h-[104px] items-center justify-center rounded-sm border border-dashed border-line text-[11.5px] text-faint">
-                          No photograph
+                          No photo
                         </div>
                       )}
 
@@ -178,7 +182,7 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
                         {r.text && <p className="text-[13.5px] text-ink-2">“{r.text}”</p>}
                         {r.voiceTranscript && (
                           <p className="text-[13px] text-muted">
-                            <span className="label mr-1.5">Voice</span>“{r.voiceTranscript}”
+                            <span className="mr-1.5 font-semibold text-ink-2">Voice:</span>“{r.voiceTranscript}”
                           </p>
                         )}
                         {r.reporterName && (
@@ -192,14 +196,14 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
                     {ex && (
                       <div className="mt-3 rounded-sm bg-sunken p-3">
                         <div className="flex flex-wrap items-center gap-2">
-                          <span className="label">Extraction</span>
+                          <span className="text-[13px] font-semibold text-ink-2">What the AI understood</span>
                           <EngineChip engine={ex.engine} />
                           <span className="chip bg-panel text-muted">
-                            confidence {ex.confidence.toFixed(2)}
+                            AI confidence {Math.round(ex.confidence * 100)}%
                           </span>
-                          <span className="chip bg-panel text-muted">severity {ex.severityBand}</span>
+                          <span className="chip bg-panel text-muted">severity: {ex.severityBand}</span>
                           {ex.needsHumanReview && (
-                            <span className="chip bg-p2-soft text-p2">needs human review</span>
+                            <span className="chip bg-p2-soft text-p2">Please check this one</span>
                           )}
                           <span className="tnum ml-auto text-[11px] text-faint">{ex.modelLatencyMs} ms</span>
                         </div>
@@ -217,7 +221,7 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
                       </div>
                     )}
                     {i === 0 && inc.reports.length > 1 && (
-                      <p className="mt-2 text-[11.5px] text-faint">Originating report.</p>
+                      <p className="mt-2 text-[12px] text-faint">This was the first report.</p>
                     )}
                   </li>
                 );
@@ -226,18 +230,18 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
           </Panel>
 
           {inc.linkLog.length > 0 && (
-            <Panel title="Linking decisions" dense>
+            <Panel title="Repeat reports" hint="Reports judged to be about the same problem, and why." dense>
               <ul>
                 {inc.linkLog.map((m, i) => (
                   <li key={i} className="border-b border-line px-4 py-3 last:border-0">
                     <div className="flex flex-wrap items-center gap-2">
                       <span className="mono text-faint">{m.reportId}</span>
                       {m.action === 'linked' ? (
-                        <span className="chip bg-ok-soft text-ok">
-                          linked{m.confidence !== undefined ? ` · ${m.confidence.toFixed(2)}` : ''}
+                        <span className="chip bg-violet-soft text-violet">
+                          Linked{m.confidence !== undefined ? ` (${Math.round(m.confidence * 100)}% sure)` : ''}
                         </span>
                       ) : (
-                        <span className="chip bg-p2-soft text-p2">separated</span>
+                        <span className="chip bg-p2-soft text-p2">Separated</span>
                       )}
                       {m.engine && <EngineChip engine={m.engine} />}
                       {m.by && <span className="chip bg-sunken text-muted">by {m.by}</span>}
@@ -248,13 +252,13 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
                 ))}
               </ul>
               <p className="border-t border-line px-4 py-2.5 text-[11.5px] leading-snug text-faint">
-                Linking is a similarity judgement and will be wrong in both directions. Each report stays
-                individually visible above and can be separated back out.
+                Matching reports is a judgement call and can be wrong either way. Every report stays visible
+                above, and you can separate one back out.
               </p>
             </Panel>
           )}
 
-          <Panel title="Timeline" dense>
+          <Panel title="What has happened so far" dense>
             <ol>
               {[...inc.timeline].reverse().map((t, i) => (
                 <li key={i} className="flex gap-3 border-b border-line px-4 py-2.5 last:border-0">
@@ -272,19 +276,19 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
 
         {/* ────────────────────────── Right column ─────────────────────────── */}
         <div className="space-y-5">
-          <Panel title="Official actions">
+          <Panel title="Take action" hint="Only an official can move an incident forward.">
             <CaseActions incident={inc} />
           </Panel>
 
-          <Panel title="Closure">
+          <Panel title="Close this incident">
             <ClosureConfirm incident={inc} />
           </Panel>
 
-          <Panel title={`Priority — recommended ${inc.recommendedPriority.score}/100`}>
+          <Panel title="Why this urgency?" hint={`The system scored this ${inc.recommendedPriority.score} out of 100.`}>
             {inc.priorityOverride && (
               <p className="mb-3 rounded-sm bg-accent-soft px-2.5 py-2 text-[12.5px] leading-snug text-accent-ink">
-                {inc.priorityOverride.by} set this to <strong>{inc.priorityOverride.band}</strong>, against a
-                recommendation of {inc.recommendedPriority.band}.
+                {inc.priorityOverride.by} changed this to <strong>{inc.priorityOverride.band}</strong>. The AI
+                suggested {inc.recommendedPriority.band}.
                 {inc.priorityOverride.reason && ` Reason: ${inc.priorityOverride.reason}`}
               </p>
             )}
@@ -301,7 +305,7 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
                 ))}
                 <tr className="border-t-2 border-line-strong">
                   <td className="pt-2 text-[13.5px] font-semibold text-ink">
-                    Total → {inc.recommendedPriority.band} recommended
+                    Total: suggested {inc.recommendedPriority.band}
                   </td>
                   <td className="tnum pt-2 text-right text-[13.5px] font-semibold text-ink">
                     {inc.recommendedPriority.score}
@@ -310,16 +314,16 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
               </tbody>
             </table>
             <p className="mt-3 border-t border-line pt-2.5 text-[11.5px] leading-snug text-muted">
-              Computed by a fixed formula, not by the model. The model supplies the severity band and hazard
-              flags; the arithmetic above converts them. Thresholds: P1 ≥ 75, P2 ≥ 60, P3 ≥ 40. This is a
-              recommendation — an official may override it, and both values stay on the record.
+              The score comes from a fixed formula, not from the AI. The AI only reports how severe it looks and
+              which hazards are present; the points above are simple arithmetic. P1 starts at 75, P2 at 60,
+              P3 at 40. An official can change it, and both values stay on record.
             </p>
           </Panel>
 
-          <Panel title="Routing">
+          <Panel title="Who handles it">
             <dl>
               <KeyValue k="Department" v={inc.department.name} />
-              <KeyValue k="Code" v={<span className="mono">{inc.department.code}</span>} />
+              <KeyValue k="Dept. code" v={<span className="mono">{inc.department.code}</span>} />
               <KeyValue k="Control line" v={<span className="mono">{inc.department.contactPhone}</span>} />
               <KeyValue k="Email" v={<span className="mono">{inc.department.contactEmail}</span>} />
               {inc.department.secondary.length > 0 && (
@@ -331,7 +335,7 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
             </p>
           </Panel>
 
-          <Panel title="Live context">
+          <Panel title="Conditions at the scene">
             <dl>
               {inc.context.weather ? (
                 <>
@@ -353,7 +357,7 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
                     <span>
                       {inc.context.traffic.congestionLevel} — {inc.context.traffic.note}
                       <span className="mt-1 block text-[11.5px] text-p2">
-                        Simulated provider. No live traffic feed is connected.
+                        Simulated. No live traffic feed is connected.
                       </span>
                     </span>
                   }
@@ -366,7 +370,7 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
           </Panel>
 
           {inc.dispatch && (
-            <Panel title="Dispatch packet">
+            <Panel title="Message to the department" hint="Prepared for the team that will respond.">
               <div className="mono mb-2 text-faint">{inc.dispatch.payloadId}</div>
               <div className="rounded-sm bg-sunken p-3 text-[12.5px] leading-relaxed">
                 <div className="font-medium text-ink">{inc.dispatch.subject}</div>
@@ -379,7 +383,7 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
             </Panel>
           )}
 
-          <Panel title="Resolution verification — advisory">
+          <Panel title="Was it fixed?" hint="The AI compares an after-photo with the original. It advises; a person decides.">
             {inc.verification ? (
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
@@ -395,7 +399,7 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
                     {inc.verification.verdict}
                   </span>
                   <span className="chip bg-sunken text-muted">
-                    confidence {inc.verification.confidence.toFixed(2)}
+                    AI confidence {Math.round(inc.verification.confidence * 100)}%
                   </span>
                   <EngineChip engine={inc.verification.engine} />
                 </div>
@@ -408,12 +412,11 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
                 )}
                 <p className="text-[13px] leading-snug text-ink-2">{inc.verification.rationale}</p>
                 <p className="border-t border-line pt-2.5 text-[11.5px] leading-snug text-muted">
-                  This verdict is a recommendation to the reviewing official. It cannot close the incident
-                  on its own.
+                  This is advice for the reviewing official. It cannot close the incident by itself.
                 </p>
                 {!closed && (
                   <div className="border-t border-line pt-3">
-                    <div className="label mb-2">Re-submit after-evidence</div>
+                    <div className="mb-2 text-[14px] font-semibold text-ink-2">Send a new after-photo</div>
                     <VerificationForm id={inc.id} />
                   </div>
                 )}
@@ -424,7 +427,7 @@ export default async function IncidentPage({ params }: { params: Promise<{ id: s
           </Panel>
 
           {inc.escalations.length > 0 && (
-            <Panel title="Escalations" dense>
+            <Panel title="Escalated to" hint="Raised to senior staff because the incident ran late." dense>
               <ul>
                 {inc.escalations.map((e, i) => (
                   <li key={i} className="border-b border-line px-4 py-3 last:border-0">
